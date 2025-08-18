@@ -52,6 +52,22 @@ export class Game extends Phaser.Scene {
         // Power-up system
         this.powerUpManager = null;
 
+        // NEW: Ship progression system
+        this.playerShipTypes = [8, 9, 10, 11, 0, 1, 2, 3]; // Different ship sprites for player
+        this.currentPlayerShipIndex = 0;
+
+        // NEW: Enemy ship types with different behaviors
+        this.enemyShipTypes = [
+            { id: 12, name: 'Basic', shootPattern: 'single', fireRate: [100, 300] },
+            { id: 13, name: 'Rapid', shootPattern: 'rapid', fireRate: [50, 150] },
+            { id: 14, name: 'Burst', shootPattern: 'burst', fireRate: [200, 400] },
+            { id: 15, name: 'Spread', shootPattern: 'spread', fireRate: [150, 250] },
+            { id: 4, name: 'Heavy', shootPattern: 'heavy', fireRate: [300, 500] },
+            { id: 5, name: 'Sniper', shootPattern: 'sniper', fireRate: [400, 600] },
+            { id: 6, name: 'Bomber', shootPattern: 'bomber', fireRate: [250, 350] },
+            { id: 7, name: 'Elite', shootPattern: 'elite', fireRate: [100, 200] }
+        ];
+
         // NEW: Fibonacci scaling system
         this.difficultyLevel = 1;
         this.fibonacciSequence = [1000, 2000, 3000, 5000, 8000, 13000, 21000, 34000, 55000, 89000, 144000, 233000, 377000]; // Score thresholds
@@ -279,7 +295,8 @@ export class Game extends Phaser.Scene {
     }
 
     initPlayer() {
-        this.player = new Player(this, this.centreX, this.scale.height - 100, 8, 1); // Pass player ID
+        const currentShipId = this.playerShipTypes[this.currentPlayerShipIndex];
+        this.player = new Player(this, this.centreX, this.scale.height - 100, currentShipId, 1); // Pass player ID
     }
 
     initInput() {
@@ -381,14 +398,34 @@ export class Game extends Phaser.Scene {
         this.enemyBulletGroup.add(bullet);
     }
 
+    // NEW: Fire enemy bullet at specific angle
+    fireEnemyBulletAngled(x, y, power, angleDegrees) {
+        const bullet = new EnemyBullet(this, x, y, power);
+        
+        // Convert angle to radians and calculate velocity components
+        const angleRadians = Phaser.Math.DegToRad(angleDegrees);
+        const speed = 200; // Enemy bullet speed
+        const velocityX = Math.sin(angleRadians) * speed;
+        const velocityY = Math.cos(angleRadians) * speed; // Positive because enemy bullets go down
+        
+        // Set the bullet's velocity
+        bullet.setVelocity(velocityX, velocityY);
+        
+        this.enemyBulletGroup.add(bullet);
+    }
+
     removeEnemyBullet(bullet) {
         this.enemyBulletGroup.remove(bullet, true, true); // Fixed: was removing from playerBulletGroup
     }
 
-    // add a group of flying enemies
+    // add a group of flying enemies with varied types
     addFlyingGroup() {
         this.spawnEnemyCounter = Phaser.Math.RND.between(5, 8) * 60; // spawn next group after x seconds
-        const randomId = Phaser.Math.RND.between(0, 11); // id to choose image in tiles.png
+        
+        // Choose enemy type based on difficulty level
+        const availableEnemyTypes = this.getAvailableEnemyTypes();
+        const randomEnemyType = Phaser.Math.RND.pick(availableEnemyTypes);
+        
         const randomCount = Phaser.Math.RND.between(5, 15); // number of enemies to spawn
         const randomInterval = Phaser.Math.RND.between(8, 12) * 100; // delay between spawning of each enemy
         const randomPath = Phaser.Math.RND.between(0, 3); // choose a path, a group follows the same path
@@ -399,19 +436,27 @@ export class Game extends Phaser.Scene {
             {
                 delay: randomInterval,
                 callback: this.addEnemy,
-                args: [randomId, randomPath, randomSpeed, randomPower], // parameters passed to addEnemy()
+                args: [randomEnemyType, randomPath, randomSpeed, randomPower], // parameters passed to addEnemy()
                 callbackScope: this,
                 repeat: randomCount
             }
         );
+        
+        console.log(`Spawning ${randomCount + 1} ${randomEnemyType.name} enemies (${randomEnemyType.shootPattern} pattern)`);
     }
 
-    addEnemy(shipId, pathId, speed, power) {
+    // NEW: Get available enemy types based on difficulty level
+    getAvailableEnemyTypes() {
+        const maxTypeIndex = Math.min(Math.floor((this.difficultyLevel - 1) / 2), this.enemyShipTypes.length - 1);
+        return this.enemyShipTypes.slice(0, maxTypeIndex + 1);
+    }
+
+    addEnemy(enemyType, pathId, speed, power) {
         // Use scaled health and color based on difficulty level
         const enemyHealth = this.getCurrentEnemyHealth();
         const enemyColor = this.getCurrentEnemyColor();
         
-        const enemy = new EnemyFlying(this, shipId, pathId, speed, power, enemyHealth, enemyColor);
+        const enemy = new EnemyFlying(this, enemyType, pathId, speed, power, enemyHealth, enemyColor);
         this.enemyGroup.add(enemy);
     }
 
@@ -460,13 +505,18 @@ export class Game extends Phaser.Scene {
         this.progressText.setText(`Next: ${currentThreshold}`);
     }
 
-    // NEW: Level up system with player bonuses
+    // NEW: Level up system with player bonuses and ship changes
     levelUp() {
         const oldLevel = this.difficultyLevel;
         this.difficultyLevel++;
         
         // Update UI
         this.levelText.setText(`Level: ${this.difficultyLevel}`);
+        
+        // Change player ship every 6 levels
+        if (this.difficultyLevel % 6 === 1 && this.difficultyLevel > 1) {
+            this.upgradePlayerShip();
+        }
         
         // Player gets bonuses when leveling up
         this.givePlayerLevelUpBonus();
@@ -479,12 +529,99 @@ export class Game extends Phaser.Scene {
         console.log(`Enemy color: ${this.getCurrentEnemyColor().toString(16)}`);
     }
 
-    // NEW: Give player bonuses on level up
+    // NEW: Upgrade player ship every 6 levels with enhanced stats preservation
+    upgradePlayerShip() {
+        this.currentPlayerShipIndex = (this.currentPlayerShipIndex + 1) % this.playerShipTypes.length;
+        const newShipId = this.playerShipTypes[this.currentPlayerShipIndex];
+        
+        // Store player stats including new scaling properties
+        const playerStats = {
+            health: this.player.health,
+            maxHealth: this.player.maxHealth,
+            bulletPower: this.player.bulletPower,
+            fireRate: this.player.fireRate,
+            baseDamage: this.player.baseDamage || 1,
+            scaleX: this.player.scaleX,
+            scaleY: this.player.scaleY,
+            x: this.player.x,
+            y: this.player.y
+        };
+        
+        // Remove old player
+        this.player.destroy();
+        
+        // Create new player with upgraded ship
+        this.player = new Player(this, playerStats.x, playerStats.y, newShipId, 1);
+        
+        // Restore player stats
+        this.player.health = playerStats.health;
+        this.player.maxHealth = playerStats.maxHealth;
+        this.player.bulletPower = playerStats.bulletPower;
+        this.player.fireRate = playerStats.fireRate;
+        this.player.baseDamage = playerStats.baseDamage;
+        
+        // Restore scaling
+        this.player.setScale(playerStats.scaleX, playerStats.scaleY);
+        
+        // Update hitbox for current scale
+        const hitboxScale = Math.min(playerStats.scaleX, 1.3);
+        this.player.body.setSize(
+            64 * hitboxScale, // Base ship size is 64x64
+            64 * hitboxScale
+        );
+        
+        // Update health UI
+        this.updatePlayerHealthUI(this.player.playerId, this.player.health, this.player.maxHealth);
+        
+        // Reinitialize physics collision
+        this.physics.add.overlap(this.player, this.enemyBulletGroup, this.hitPlayer, null, this);
+        this.physics.add.overlap(this.player, this.enemyGroup, this.hitPlayer, null, this);
+        this.physics.add.overlap(this.player, this.powerUpManager.getPowerUpGroup(), this.collectPowerUp, null, this);
+        
+        // Show ship upgrade effect
+        this.showShipUpgradeEffect();
+        
+        console.log(`Player ship upgraded to type ${newShipId} (index ${this.currentPlayerShipIndex})`);
+        console.log(`Ship scale: ${playerStats.scaleX.toFixed(2)}x, Base damage: ${playerStats.baseDamage}`);
+    }
+
+    // NEW: Ship upgrade visual effect
+    showShipUpgradeEffect() {
+        // Bright flash around player
+        const upgradeFlash = this.add.circle(this.player.x, this.player.y, 80, 0x00ffff, 0.8);
+        upgradeFlash.setDepth(150);
+        
+        this.tweens.add({
+            targets: upgradeFlash,
+            scaleX: 3,
+            scaleY: 3,
+            alpha: 0,
+            duration: 1000,
+            ease: 'Power3',
+            onComplete: () => upgradeFlash.destroy()
+        });
+        
+        // Ship upgrade text
+        this.showFloatingText(this.player.x, this.player.y - 50, 'SHIP UPGRADE!', 0x00ffff, 22);
+    }
+
+    // NEW: Give player bonuses on level up with progressive scaling
     givePlayerLevelUpBonus() {
         if (!this.player) return;
         
-        // Increase max health every level
-        this.player.maxHealth++;
+        // Scale player size every 2 levels (5% bigger)
+        if (this.difficultyLevel % 2 === 0) {
+            this.scalePlayerSize();
+        }
+        
+        // Progressive health bonus (scales with level)
+        const healthBonus = this.calculateHealthBonus();
+        this.player.maxHealth += healthBonus;
+        
+        // Progressive damage bonus every 3 levels
+        if (this.difficultyLevel % 3 === 0) {
+            this.increasePlayerDamage();
+        }
         
         // Full heal on level up
         this.player.health = this.player.maxHealth;
@@ -492,10 +629,70 @@ export class Game extends Phaser.Scene {
         // Update health UI
         this.updatePlayerHealthUI(this.player.playerId, this.player.health, this.player.maxHealth);
         
-        // Show bonus text
-        this.showFloatingText(this.player.x, this.player.y - 30, `LEVEL UP!\n+1 MAX HP\nFULL HEAL!`, 0x00ff00, 24);
+        // Show bonus text with all upgrades
+        const bonusText = this.createLevelUpBonusText(healthBonus);
+        this.showFloatingText(this.player.x, this.player.y - 30, bonusText, 0x00ff00, 24);
         
-        console.log(`Player max health increased to: ${this.player.maxHealth}`);
+        console.log(`Level ${this.difficultyLevel} bonuses: +${healthBonus} HP, Scale: ${this.player.scaleX.toFixed(2)}x, Damage: ${this.player.baseDamage || 1}`);
+    }
+
+    // NEW: Scale player size by 5% every 2 levels
+    scalePlayerSize() {
+        const currentScale = this.player.scaleX;
+        const newScale = currentScale * 1.05; // 5% bigger
+        
+        this.player.setScale(newScale);
+        
+        // Update hitbox proportionally (keep it fair)
+        const hitboxScale = Math.min(newScale, 1.3); // Cap hitbox growth at 30%
+        this.player.body.setSize(
+            this.player.body.width * (hitboxScale / currentScale),
+            this.player.body.height * (hitboxScale / currentScale)
+        );
+        
+        console.log(`Player scaled to ${newScale.toFixed(2)}x (hitbox: ${hitboxScale.toFixed(2)}x)`);
+    }
+
+    // NEW: Calculate progressive health bonus
+    calculateHealthBonus() {
+        // Base bonus starts at 3, increases every 5 levels
+        const baseBonus = 3;
+        const levelTier = Math.floor((this.difficultyLevel - 1) / 5);
+        const progressiveBonus = levelTier * 2; // +2 per tier
+        
+        return baseBonus + progressiveBonus;
+    }
+
+    // NEW: Increase player damage every 3 levels
+    increasePlayerDamage() {
+        if (!this.player.baseDamage) {
+            this.player.baseDamage = 1; // Initialize base damage
+        }
+        
+        this.player.baseDamage += 1;
+        console.log(`Player base damage increased to ${this.player.baseDamage}`);
+    }
+
+    // NEW: Create comprehensive level up bonus text
+    createLevelUpBonusText(healthBonus) {
+        let bonusText = `LEVEL UP!\n+${healthBonus} MAX HP\nFULL HEAL!`;
+        
+        // Add size bonus text every 2 levels
+        if (this.difficultyLevel % 2 === 0) {
+            bonusText += '\nSIZE UP!';
+        }
+        
+        // Add damage bonus text every 3 levels
+        if (this.difficultyLevel % 3 === 0) {
+            bonusText += '\nDAMAGE UP!';
+        }
+        
+        // Add ship upgrade text every 6 levels
+        if (this.difficultyLevel % 6 === 1 && this.difficultyLevel > 1) {
+            bonusText += '\nNEW SHIP!';
+        }
+        
+        return bonusText;
     }
 
     // NEW: Show level up visual effects

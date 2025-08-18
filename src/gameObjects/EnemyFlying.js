@@ -14,17 +14,28 @@ export default class EnemyFlying extends Phaser.Physics.Arcade.Sprite {
         [[1330, 360], [640, 50], [50, 360], [640, 670], [1180, 360], [640, 50], [50, 360], [640, 670], [1330, 360]],
     ]
 
-    constructor(scene, shipId, pathId, speed, power, health = 1, color = 0xffffff) {
-        const startingId = 12;
-        super(scene, 500, 500, ASSETS.spritesheet.ships.key, startingId + shipId);
+    constructor(scene, enemyType, pathId, speed, power, health = 1, color = 0xffffff) {
+        // enemyType is now an object with id, name, shootPattern, fireRate
+        super(scene, 500, 500, ASSETS.spritesheet.ships.key, enemyType.id);
 
         scene.add.existing(this);
         scene.physics.add.existing(this);
 
+        this.enemyType = enemyType;
         this.power = power;
         this.health = health; // Set scaled health
         this.maxHealth = health; // Store original health for damage effects
-        this.fireCounter = Phaser.Math.RND.between(this.fireCounterMin, this.fireCounterMax); // random firing interval
+        
+        // Set fire rate based on enemy type
+        this.fireCounterMin = enemyType.fireRate[0];
+        this.fireCounterMax = enemyType.fireRate[1];
+        this.fireCounter = Phaser.Math.RND.between(this.fireCounterMin, this.fireCounterMax);
+        
+        // Special properties for different enemy types
+        this.burstCount = 0; // For burst fire
+        this.burstMax = 3; // Number of shots in burst
+        this.spreadAngle = 30; // Angle for spread shots
+        
         this.setFlipY(true); // flip image vertically
         this.setDepth(10);
         this.scene = scene;
@@ -35,6 +46,8 @@ export default class EnemyFlying extends Phaser.Physics.Arcade.Sprite {
         }
 
         this.initPath(pathId, speed); // choose path to follow
+        
+        console.log(`Created ${enemyType.name} enemy with ${enemyType.shootPattern} pattern`);
     }
 
     preUpdate(time, delta) {
@@ -136,7 +149,115 @@ export default class EnemyFlying extends Phaser.Physics.Arcade.Sprite {
 
     fire() {
         this.fireCounter = Phaser.Math.RND.between(this.fireCounterMin, this.fireCounterMax);
-        this.scene.fireEnemyBullet(this.x, this.y, this.power);
+        
+        // Different shooting patterns based on enemy type
+        switch (this.enemyType.shootPattern) {
+            case 'single':
+                this.scene.fireEnemyBullet(this.x, this.y, this.power);
+                break;
+                
+            case 'rapid':
+                this.scene.fireEnemyBullet(this.x, this.y, this.power);
+                // 50% chance for double shot
+                if (Phaser.Math.Between(1, 100) <= 50) {
+                    this.scene.time.delayedCall(100, () => {
+                        if (this.active) this.scene.fireEnemyBullet(this.x, this.y, this.power);
+                    });
+                }
+                break;
+                
+            case 'burst':
+                this.fireBurst();
+                break;
+                
+            case 'spread':
+                this.fireSpread();
+                break;
+                
+            case 'heavy':
+                this.scene.fireEnemyBullet(this.x, this.y, this.power + 1); // More powerful bullets
+                break;
+                
+            case 'sniper':
+                // Aimed shot towards player
+                this.fireAimedShot();
+                break;
+                
+            case 'bomber':
+                this.fireBomber();
+                break;
+                
+            case 'elite':
+                this.fireElite();
+                break;
+                
+            default:
+                this.scene.fireEnemyBullet(this.x, this.y, this.power);
+        }
+    }
+
+    // NEW: Burst fire pattern
+    fireBurst() {
+        this.burstCount = 0;
+        const burstInterval = 150; // 150ms between burst shots
+        
+        for (let i = 0; i < this.burstMax; i++) {
+            this.scene.time.delayedCall(i * burstInterval, () => {
+                if (this.active) {
+                    this.scene.fireEnemyBullet(this.x, this.y, this.power);
+                }
+            });
+        }
+    }
+
+    // NEW: Spread fire pattern
+    fireSpread() {
+        const angles = [-this.spreadAngle, 0, this.spreadAngle]; // 3-way spread
+        
+        angles.forEach(angle => {
+            this.scene.fireEnemyBulletAngled(this.x, this.y, this.power, angle);
+        });
+    }
+
+    // NEW: Aimed shot towards player
+    fireAimedShot() {
+        if (!this.scene.player) {
+            this.scene.fireEnemyBullet(this.x, this.y, this.power);
+            return;
+        }
+        
+        // Calculate angle to player
+        const dx = this.scene.player.x - this.x;
+        const dy = this.scene.player.y - this.y;
+        const angle = Phaser.Math.Angle.Between(this.x, this.y, this.scene.player.x, this.scene.player.y);
+        const angleDegrees = Phaser.Math.RadToDeg(angle) + 90; // Adjust for sprite orientation
+        
+        this.scene.fireEnemyBulletAngled(this.x, this.y, this.power + 1, angleDegrees);
+    }
+
+    // NEW: Bomber pattern (multiple spread shots)
+    fireBomber() {
+        const angles = [-45, -22.5, 0, 22.5, 45]; // 5-way spread
+        
+        angles.forEach((angle, index) => {
+            this.scene.time.delayedCall(index * 50, () => {
+                if (this.active) {
+                    this.scene.fireEnemyBulletAngled(this.x, this.y, this.power, angle);
+                }
+            });
+        });
+    }
+
+    // NEW: Elite pattern (combination of patterns)
+    fireElite() {
+        // Combination of aimed shot + spread
+        this.fireAimedShot();
+        
+        this.scene.time.delayedCall(200, () => {
+            if (this.active) {
+                this.fireSpread();
+            }
+        });
     }
 
     initPath(pathId, speed) {

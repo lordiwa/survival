@@ -8,10 +8,10 @@ export const POWERUP_CONFIG = {
     // Progressive rarity: Level 2 > Level 3 > Level 5
     WEIGHTS: {
         HEALTH: 35,           // Most common (35%)
-        ATTACK_SPEED: 30,     // Very common (30%)
-        BULLET_POWER_2: 25,   // Common - Triple shot (25%)
-        BULLET_POWER_3: 8,    // Rare - Five shot (8%)
-        BULLET_POWER_5: 2     // Very rare - Mega shot (2%)
+        ATTACK_SPEED: 20,     // Very common (30%)
+        BULLET_POWER_2: 20,   // Common - Triple shot (25%)
+        BULLET_POWER_3: 15,    // Rare - Five shot (8%)
+        BULLET_POWER_5: 10     // Very rare - Mega shot (2%)
     },
 
     // Power-up effects configuration
@@ -41,19 +41,19 @@ export const POWERUP_CONFIG = {
         COLLECTION_FLASH_DURATION: 300
     },
 
-    // FIXED: Use tiles that exist in your sprite sheet
-    // Based on your existing game, using early tile indices that should exist
+    // Use tiles from your actual sprite sheet
+    // Based on the tilemap image you provided
     TILE_IDS: {
-        HEALTH: 0,        // Use tile 0 (should be first tile)
-        ATTACK_SPEED: 1,  // Use tile 1 (should be second tile)
-        BULLET_POWER_2: 2, // Use tile 2
-        BULLET_POWER_3: 3, // Use tile 3  
-        BULLET_POWER_5: 4  // Use tile 4
+        HEALTH: 24,       // Red cross medical symbol (row 1, around column 6)
+        ATTACK_SPEED: 25,  // Use tile 1 
+        BULLET_POWER_2: 21, // Use tile 2
+        BULLET_POWER_3: 22, // Use tile 3  
+        BULLET_POWER_5: 29  // Use tile 4
     },
 
     // Color themes for each power-up type
     COLORS: {
-        HEALTH: 0xff6666,     // Red tint for health
+        HEALTH: 0xffffff,     // Red tint for health
         ATTACK_SPEED: 0xffff66, // Yellow tint for attack speed
         BULLET_POWER_2: 0x66ff66, // Green tint for +2 power (common)
         BULLET_POWER_3: 0x6666ff, // Blue tint for +3 power (rare)

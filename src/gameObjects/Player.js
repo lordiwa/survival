@@ -14,6 +14,7 @@ export default class Player extends Phaser.Physics.Arcade.Sprite {
     flashTimer = 0;
     flashDuration = 100; // Flash every 100ms when invulnerable
     bulletPower = 1; // Bullet damage power
+    baseDamage = 1; // Base damage bonus from leveling up
 
     constructor(scene, x, y, shipId, playerId = 1) {
         super(scene, x, y, ASSETS.spritesheet.ships.key, shipId);
@@ -74,42 +75,45 @@ export default class Player extends Phaser.Physics.Arcade.Sprite {
 
         this.fireCounter = this.fireRate;
 
+        // Calculate total damage (base damage + bullet power)
+        const totalDamage = (this.baseDamage || 1) + (this.bulletPower - 1);
+
         // Check if player has multi-shot capability
         if (this.bulletPower >= 2) {
-            this.fireMultiShot();
+            this.fireMultiShot(totalDamage);
         } else {
-            this.scene.fireBullet(this.x, this.y, this.bulletPower);
+            this.scene.fireBullet(this.x, this.y, totalDamage);
         }
     }
 
-    // NEW: Multi-shot firing system
-    fireMultiShot() {
+    // NEW: Multi-shot firing system with enhanced damage
+    fireMultiShot(totalDamage) {
         const bulletSpeed = 1000;
         const diagonalAngle = 15; // Degrees for diagonal shots
         
         if (this.bulletPower === 2) {
             // Triple shot: center + 2 diagonal
-            this.scene.fireBullet(this.x, this.y, 1); // Center bullet
-            this.scene.fireDiagonalBullet(this.x, this.y, -diagonalAngle, 1); // Left diagonal
-            this.scene.fireDiagonalBullet(this.x, this.y, diagonalAngle, 1);  // Right diagonal
+            this.scene.fireBullet(this.x, this.y, totalDamage); // Center bullet
+            this.scene.fireDiagonalBullet(this.x, this.y, -diagonalAngle, totalDamage); // Left diagonal
+            this.scene.fireDiagonalBullet(this.x, this.y, diagonalAngle, totalDamage);  // Right diagonal
         } 
         else if (this.bulletPower === 3) {
             // Five shot: center + 4 diagonal (wider spread)
-            this.scene.fireBullet(this.x, this.y, 1); // Center bullet
-            this.scene.fireDiagonalBullet(this.x, this.y, -diagonalAngle, 1); // Left diagonal
-            this.scene.fireDiagonalBullet(this.x, this.y, diagonalAngle, 1);  // Right diagonal
-            this.scene.fireDiagonalBullet(this.x, this.y, -diagonalAngle * 2, 1); // Far left
-            this.scene.fireDiagonalBullet(this.x, this.y, diagonalAngle * 2, 1);  // Far right
+            this.scene.fireBullet(this.x, this.y, totalDamage); // Center bullet
+            this.scene.fireDiagonalBullet(this.x, this.y, -diagonalAngle, totalDamage); // Left diagonal
+            this.scene.fireDiagonalBullet(this.x, this.y, diagonalAngle, totalDamage);  // Right diagonal
+            this.scene.fireDiagonalBullet(this.x, this.y, -diagonalAngle * 2, totalDamage); // Far left
+            this.scene.fireDiagonalBullet(this.x, this.y, diagonalAngle * 2, totalDamage);  // Far right
         }
         else if (this.bulletPower >= 4) {
             // Seven shot: center + 6 diagonal (full spread)
-            this.scene.fireBullet(this.x, this.y, 2); // Center bullet (more powerful)
-            this.scene.fireDiagonalBullet(this.x, this.y, -10, 1);
-            this.scene.fireDiagonalBullet(this.x, this.y, 10, 1);
-            this.scene.fireDiagonalBullet(this.x, this.y, -20, 1);
-            this.scene.fireDiagonalBullet(this.x, this.y, 20, 1);
-            this.scene.fireDiagonalBullet(this.x, this.y, -30, 1);
-            this.scene.fireDiagonalBullet(this.x, this.y, 30, 1);
+            this.scene.fireBullet(this.x, this.y, totalDamage + 1); // Center bullet (extra powerful)
+            this.scene.fireDiagonalBullet(this.x, this.y, -10, totalDamage);
+            this.scene.fireDiagonalBullet(this.x, this.y, 10, totalDamage);
+            this.scene.fireDiagonalBullet(this.x, this.y, -20, totalDamage);
+            this.scene.fireDiagonalBullet(this.x, this.y, 20, totalDamage);
+            this.scene.fireDiagonalBullet(this.x, this.y, -30, totalDamage);
+            this.scene.fireDiagonalBullet(this.x, this.y, 30, totalDamage);
         }
     }
 
@@ -204,5 +208,16 @@ export default class Player extends Phaser.Physics.Arcade.Sprite {
 
     setBulletPower(power) {
         this.bulletPower = Math.max(1, Math.min(5, power)); // Clamp between 1 and 5
+    }
+
+    // NEW: Get total damage output (base damage + bullet power bonus)
+    getTotalDamage() {
+        return (this.baseDamage || 1) + (this.bulletPower - 1);
+    }
+
+    // NEW: Increase base damage (used on level up)
+    increaseBaseDamage(amount = 1) {
+        this.baseDamage = (this.baseDamage || 1) + amount;
+        console.log(`Base damage increased to: ${this.baseDamage}`);
     }
 }
