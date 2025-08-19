@@ -1,4 +1,5 @@
 import ASSETS from '../assets.js';
+import EnemyBullet from './EnemyBullet.js';
 
 export default class EnemyFlying extends Phaser.Physics.Arcade.Sprite {
     fireCounterMin = 100; // minimum fire rate
@@ -25,17 +26,20 @@ export default class EnemyFlying extends Phaser.Physics.Arcade.Sprite {
         this.power = power;
         this.health = health; // Set scaled health
         this.maxHealth = health; // Store original health for damage effects
-        
+
+        // Reduce collision damage for early levels
+        this.collisionPower = Math.min(power, 2); // Enemies do max 2 collision damage
+
         // Set fire rate based on enemy type
         this.fireCounterMin = enemyType.fireRate[0];
         this.fireCounterMax = enemyType.fireRate[1];
         this.fireCounter = Phaser.Math.RND.between(this.fireCounterMin, this.fireCounterMax);
-        
+
         // Special properties for different enemy types
         this.burstCount = 0; // For burst fire
         this.burstMax = 3; // Number of shots in burst
         this.spreadAngle = 30; // Angle for spread shots
-        
+
         this.setFlipY(true); // flip image vertically
         this.setDepth(10);
         this.scene = scene;
@@ -46,8 +50,8 @@ export default class EnemyFlying extends Phaser.Physics.Arcade.Sprite {
         }
 
         this.initPath(pathId, speed); // choose path to follow
-        
-        console.log(`Created ${enemyType.name} enemy with ${enemyType.shootPattern} pattern`);
+
+        console.log(`Created ${enemyType.name} enemy with ${enemyType.shootPattern} pattern, collision power: ${this.collisionPower}`);
     }
 
     preUpdate(time, delta) {
@@ -84,12 +88,11 @@ export default class EnemyFlying extends Phaser.Physics.Arcade.Sprite {
         }
     }
 
-    // NEW: Show visual damage effects
     showDamageEffect() {
         // Flash red when hit
         const originalTint = this.tintTopLeft;
         this.setTint(0xff0000);
-        
+
         this.scene.time.delayedCall(100, () => {
             if (this.active) {
                 this.setTint(originalTint);
@@ -102,7 +105,6 @@ export default class EnemyFlying extends Phaser.Physics.Arcade.Sprite {
         }
     }
 
-    // NEW: Show floating damage text
     showDamageText(damage) {
         const damageText = this.scene.add.text(this.x, this.y - 20, `-${damage}`, {
             fontFamily: 'Arial Black',
@@ -125,7 +127,7 @@ export default class EnemyFlying extends Phaser.Physics.Arcade.Sprite {
     die() {
         // Bigger explosion for stronger enemies
         this.scene.addExplosion(this.x, this.y);
-        
+
         if (this.maxHealth >= 3) {
             // Add extra explosion effects for tough enemies
             this.scene.addExplosion(this.x + 15, this.y + 15);
@@ -136,9 +138,9 @@ export default class EnemyFlying extends Phaser.Physics.Arcade.Sprite {
         const baseScore = 10;
         const scoreMultiplier = Math.max(1, Math.floor(this.maxHealth / 2));
         const totalScore = baseScore * scoreMultiplier;
-        
+
         this.scene.updateScore(totalScore);
-        
+
         // Show score text
         if (scoreMultiplier > 1) {
             this.scene.showFloatingText(this.x, this.y, `+${totalScore}`, 0xffff00, 18);
@@ -149,110 +151,92 @@ export default class EnemyFlying extends Phaser.Physics.Arcade.Sprite {
 
     fire() {
         this.fireCounter = Phaser.Math.RND.between(this.fireCounterMin, this.fireCounterMax);
-        
-        // Different shooting patterns based on enemy type
-        switch (this.enemyType.shootPattern) {
-            case 'single':
-                this.scene.fireEnemyBullet(this.x, this.y, this.power);
-                break;
-                
-            case 'rapid':
-                this.scene.fireEnemyBullet(this.x, this.y, this.power);
-                // 50% chance for double shot
-                if (Phaser.Math.Between(1, 100) <= 50) {
-                    this.scene.time.delayedCall(100, () => {
-                        if (this.active) this.scene.fireEnemyBullet(this.x, this.y, this.power);
-                    });
-                }
-                break;
-                
-            case 'burst':
-                this.fireBurst();
-                break;
-                
-            case 'spread':
-                this.fireSpread();
-                break;
-                
-            case 'heavy':
-                this.scene.fireEnemyBullet(this.x, this.y, this.power + 1); // More powerful bullets
-                break;
-                
-            case 'sniper':
-                // Aimed shot towards player
-                this.fireAimedShot();
-                break;
-                
-            case 'bomber':
-                this.fireBomber();
-                break;
-                
-            case 'elite':
-                this.fireElite();
-                break;
-                
-            default:
-                this.scene.fireEnemyBullet(this.x, this.y, this.power);
+
+        // Simple shooting pattern - just create bullets directly
+        if (this.scene.fireEnemyBullet) {
+            // Use scene method if it exists
+            this.scene.fireEnemyBullet(this.x, this.y, this.power);
+        } else {
+            // Create bullet directly if method doesn't exist
+            const bullet = new EnemyBullet(this.scene, this.x, this.y, this.power);
+            if (this.scene.enemyBulletGroup) {
+                this.scene.enemyBulletGroup.add(bullet);
+            }
         }
     }
 
-    // NEW: Burst fire pattern
+    // Simple burst fire pattern
     fireBurst() {
         this.burstCount = 0;
         const burstInterval = 150; // 150ms between burst shots
-        
+
         for (let i = 0; i < this.burstMax; i++) {
             this.scene.time.delayedCall(i * burstInterval, () => {
                 if (this.active) {
-                    this.scene.fireEnemyBullet(this.x, this.y, this.power);
+                    if (this.scene.fireEnemyBullet) {
+                        this.scene.fireEnemyBullet(this.x, this.y, this.power);
+                    } else {
+                        const bullet = new EnemyBullet(this.scene, this.x, this.y, this.power);
+                        if (this.scene.enemyBulletGroup) {
+                            this.scene.enemyBulletGroup.add(bullet);
+                        }
+                    }
                 }
             });
         }
     }
 
-    // NEW: Spread fire pattern
+    // Simple spread fire (just multiple bullets)
     fireSpread() {
-        const angles = [-this.spreadAngle, 0, this.spreadAngle]; // 3-way spread
-        
-        angles.forEach(angle => {
-            this.scene.fireEnemyBulletAngled(this.x, this.y, this.power, angle);
-        });
-    }
-
-    // NEW: Aimed shot towards player
-    fireAimedShot() {
-        if (!this.scene.player) {
+        // Fire 3 bullets slightly offset
+        if (this.scene.fireEnemyBullet) {
             this.scene.fireEnemyBullet(this.x, this.y, this.power);
-            return;
+            this.scene.fireEnemyBullet(this.x - 10, this.y, this.power);
+            this.scene.fireEnemyBullet(this.x + 10, this.y, this.power);
+        } else {
+            for (let i = -1; i <= 1; i++) {
+                const bullet = new EnemyBullet(this.scene, this.x + (i * 10), this.y, this.power);
+                if (this.scene.enemyBulletGroup) {
+                    this.scene.enemyBulletGroup.add(bullet);
+                }
+            }
         }
-        
-        // Calculate angle to player
-        const dx = this.scene.player.x - this.x;
-        const dy = this.scene.player.y - this.y;
-        const angle = Phaser.Math.Angle.Between(this.x, this.y, this.scene.player.x, this.scene.player.y);
-        const angleDegrees = Phaser.Math.RadToDeg(angle) + 90; // Adjust for sprite orientation
-        
-        this.scene.fireEnemyBulletAngled(this.x, this.y, this.power + 1, angleDegrees);
     }
 
-    // NEW: Bomber pattern (multiple spread shots)
+    // Simple aimed shot (just regular bullet)
+    fireAimedShot() {
+        if (this.scene.fireEnemyBullet) {
+            this.scene.fireEnemyBullet(this.x, this.y, this.power + 1);
+        } else {
+            const bullet = new EnemyBullet(this.scene, this.x, this.y, this.power + 1);
+            if (this.scene.enemyBulletGroup) {
+                this.scene.enemyBulletGroup.add(bullet);
+            }
+        }
+    }
+
+    // Simple bomber pattern (multiple bullets)
     fireBomber() {
-        const angles = [-45, -22.5, 0, 22.5, 45]; // 5-way spread
-        
-        angles.forEach((angle, index) => {
-            this.scene.time.delayedCall(index * 50, () => {
+        for (let i = 0; i < 5; i++) {
+            this.scene.time.delayedCall(i * 50, () => {
                 if (this.active) {
-                    this.scene.fireEnemyBulletAngled(this.x, this.y, this.power, angle);
+                    if (this.scene.fireEnemyBullet) {
+                        this.scene.fireEnemyBullet(this.x + Phaser.Math.Between(-20, 20), this.y, this.power);
+                    } else {
+                        const bullet = new EnemyBullet(this.scene, this.x + Phaser.Math.Between(-20, 20), this.y, this.power);
+                        if (this.scene.enemyBulletGroup) {
+                            this.scene.enemyBulletGroup.add(bullet);
+                        }
+                    }
                 }
             });
-        });
+        }
     }
 
-    // NEW: Elite pattern (combination of patterns)
+    // Simple elite pattern (just rapid fire)
     fireElite() {
-        // Combination of aimed shot + spread
         this.fireAimedShot();
-        
+
         this.scene.time.delayedCall(200, () => {
             if (this.active) {
                 this.fireSpread();
@@ -274,19 +258,10 @@ export default class EnemyFlying extends Phaser.Physics.Arcade.Sprite {
     }
 
     getPower() {
-        return this.power;
+        return this.collisionPower || 1; // Use collision power for ramming damage
     }
 
     remove() {
         this.scene.removeEnemy(this);
-    }
-
-    // NEW: Get current health for UI or other systems
-    getCurrentHealth() {
-        return this.health;
-    }
-
-    getMaxHealth() {
-        return this.maxHealth;
     }
 }

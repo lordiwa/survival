@@ -10,21 +10,25 @@ import EnemyFlying from '../gameObjects/EnemyFlying.js';
 import EnemyBullet from '../gameObjects/EnemyBullet.js';
 import Explosion from '../gameObjects/Explosion.js';
 import PowerUpManager from '../gameObjects/PowerUpManager.js';
+import BossEnemy, { BOSS_TYPES } from '../gameObjects/BossEnemy.js';
 
 export class Game extends Phaser.Scene {
     constructor() {
         super('Game');
     }
 
-    create() {
-        this.initVariables();
-        this.initGameUi();
-        this.initAnimations();
-        this.initPlayer();
-        this.initInput();
-        this.initPhysics();
-        this.initMap();
-    }
+create() {
+    console.log('Game scene created');
+    console.log('Scene scale:', this.scale.width, 'x', this.scale.height);
+
+    this.initVariables();
+    this.initGameUi();
+    this.initAnimations();
+    this.initPlayer();
+    this.initInput();
+    this.initPhysics();
+    this.initMap();
+}
 
     update() {
         this.updateMap();
@@ -45,7 +49,10 @@ export class Game extends Phaser.Scene {
         this.score = 0;
         this.centreX = this.scale.width * 0.5;
         this.centreY = this.scale.height * 0.5;
-
+        this.currentBoss = null;
+        this.bossGroup = null;
+        this.lastBossLevel = 0;
+        this.bossTypeIndex = 0;
         // Player health UI configuration
         this.playerHealthBars = {}; // Store health bar references for each player
 
@@ -106,97 +113,269 @@ export class Game extends Phaser.Scene {
     }
 
     initGameUi() {
-        // Create tutorial text
-        this.tutorialText = this.add.text(this.centreX, this.centreY, 'Tap to shoot!', {
-            fontFamily: 'Arial Black', fontSize: 42, color: '#ffffff',
-            stroke: '#000000', strokeThickness: 8,
-            align: 'center'
-        })
-            .setOrigin(0.5)
-            .setDepth(100);
+        try {
+            // Create tutorial text
+            this.tutorialText = this.add.text(this.centreX, this.centreY, 'Tap to shoot!', {
+                fontFamily: 'Arial Black',
+                fontSize: 42,
+                color: '#ffffff',
+                stroke: '#000000',
+                strokeThickness: 8,
+                align: 'center'
+            });
+            this.tutorialText.setOrigin(0.5);
+            this.tutorialText.setDepth(100);
+            this.temporaryPowerUps = {};
+            // Create score text
+            this.scoreText = this.add.text(20, 20, 'Score: 0', {
+                fontFamily: 'Arial Black',
+                fontSize: 28,
+                color: '#ffffff',
+                stroke: '#000000',
+                strokeThickness: 8,
+            });
+            this.scoreText.setDepth(100);
 
-        // Create score text
-        this.scoreText = this.add.text(20, 20, 'Score: 0', {
-            fontFamily: 'Arial Black', fontSize: 28, color: '#ffffff',
-            stroke: '#000000', strokeThickness: 8,
-        })
-            .setDepth(100);
+            // Create difficulty level text
+            this.levelText = this.add.text(20, 55, 'Level: 1', {
+                fontFamily: 'Arial Black',
+                fontSize: 20,
+                color: '#ffffff',
+                stroke: '#000000',
+                strokeThickness: 6,
+            });
+            this.levelText.setDepth(100);
 
-        // NEW: Create difficulty level text
-        this.levelText = this.add.text(20, 55, 'Level: 1', {
-            fontFamily: 'Arial Black', fontSize: 20, color: '#ffffff',
-            stroke: '#000000', strokeThickness: 6,
-        })
-            .setDepth(100);
+            // Create next level progress text
+            this.progressText = this.add.text(20, 80, 'Next: 1000', {
+                fontFamily: 'Arial Black',
+                fontSize: 16,
+                color: '#ffffff',
+                stroke: '#000000',
+                strokeThickness: 4,
+            });
+            this.progressText.setDepth(100);
 
-        // NEW: Create next level progress text
-        this.progressText = this.add.text(20, 80, 'Next: 1000', {
-            fontFamily: 'Arial Black', fontSize: 16, color: '#ffffff',
-            stroke: '#000000', strokeThickness: 4,
-        })
-            .setDepth(100);
+            // Create game over text
+            this.gameOverText = this.add.text(this.scale.width * 0.5, this.scale.height * 0.5, 'Game Over', {
+                fontFamily: 'Arial Black',
+                fontSize: 64,
+                color: '#ffffff',
+                stroke: '#000000',
+                strokeThickness: 8,
+                align: 'center'
+            });
+            this.gameOverText.setOrigin(0.5);
+            this.gameOverText.setDepth(100);
+            this.gameOverText.setVisible(false);
 
-        // Create game over text
-        this.gameOverText = this.add.text(this.scale.width * 0.5, this.scale.height * 0.5, 'Game Over', {
-            fontFamily: 'Arial Black', fontSize: 64, color: '#ffffff',
-            stroke: '#000000', strokeThickness: 8,
-            align: 'center'
-        })
-            .setOrigin(0.5)
-            .setDepth(100)
-            .setVisible(false);
+            // Initialize health bars for up to 4 players
+            this.initPlayerHealthBars();
 
-        // Initialize health bars for up to 4 players (positioned for future multiplayer)
-        this.initPlayerHealthBars();
+            console.log('Basic UI initialized successfully');
+
+        } catch (error) {
+            console.error('Error initializing UI:', error);
+
+            // Create minimal fallback UI
+            this.tutorialText = this.add.text(640, 360, 'Tap to shoot!', { fontSize: 32, color: '#ffffff' });
+            this.scoreText = this.add.text(20, 20, 'Score: 0', { fontSize: 24, color: '#ffffff' });
+            this.levelText = this.add.text(20, 50, 'Level: 1', { fontSize: 20, color: '#ffffff' });
+            this.progressText = this.add.text(20, 75, 'Next: 1000', { fontSize: 16, color: '#ffffff' });
+            this.gameOverText = this.add.text(640, 360, 'Game Over', { fontSize: 48, color: '#ffffff' });
+            this.gameOverText.setVisible(false);
+        }
     }
 
+
+
+
+// NEW: Initialize the temporary power-up display
+    initTemporaryPowerUpUI() {
+        this.temporaryPowerUps = {}; // Track active temporary power-ups
+        this.powerUpUIContainer = this.add.group(); // Container for all power-up UI elements
+
+        console.log('Temporary power-up UI initialized');
+    }
+
+// NEW: Add a temporary power-up to the UI
+    addTemporaryPowerUpUI(powerUpType, duration, color, displayName) {
+        const startTime = Date.now();
+        const endTime = startTime + duration;
+
+        // Calculate position (stack them vertically on the right side)
+        const activeCount = Object.keys(this.temporaryPowerUps).length;
+        const x = this.scale.width - 20;
+        const y = 120 + (activeCount * 40); // Start below level text, 40px apart
+
+        // Create background bar
+        const bgBar = this.add.rectangle(x, y, 180, 30, 0x000000, 0.7)
+            .setOrigin(1, 0.5)
+            .setDepth(150);
+
+        // Create progress bar
+        const progressBar = this.add.rectangle(x - 2, y, 176, 26, color, 0.8)
+            .setOrigin(1, 0.5)
+            .setDepth(151);
+
+        // Create icon/symbol
+        const icon = this.add.text(x - 170, y, this.getPowerUpIcon(powerUpType), {
+            fontFamily: 'Arial Black',
+            fontSize: 16,
+            color: '#ffffff',
+            stroke: '#000000',
+            strokeThickness: 2
+        }).setOrigin(0, 0.5).setDepth(152);
+
+        // Create time text
+        const timeText = this.add.text(x - 10, y, '10s', {
+            fontFamily: 'Arial Black',
+            fontSize: 14,
+            color: '#ffffff',
+            stroke: '#000000',
+            strokeThickness: 2
+        }).setOrigin(1, 0.5).setDepth(152);
+
+        // Create name text
+        const nameText = this.add.text(x - 150, y, displayName, {
+            fontFamily: 'Arial',
+            fontSize: 12,
+            color: '#ffffff',
+            stroke: '#000000',
+            strokeThickness: 1
+        }).setOrigin(0, 0.5).setDepth(152);
+
+        // Store the UI elements
+        this.temporaryPowerUps[powerUpType] = {
+            startTime: startTime,
+            endTime: endTime,
+            duration: duration,
+            bgBar: bgBar,
+            progressBar: progressBar,
+            icon: icon,
+            timeText: timeText,
+            nameText: nameText,
+            originalWidth: 176
+        };
+
+        // Add to container for easy management
+        this.powerUpUIContainer.addMultiple([bgBar, progressBar, icon, timeText, nameText]);
+
+        console.log(`Added temporary power-up UI: ${displayName} for ${duration/1000}s`);
+    }
+
+// NEW: Remove a temporary power-up from the UI
+    removeTemporaryPowerUpUI(powerUpType) {
+        const powerUpUI = this.temporaryPowerUps[powerUpType];
+        if (!powerUpUI) return;
+
+        // Destroy all UI elements
+        powerUpUI.bgBar.destroy();
+        powerUpUI.progressBar.destroy();
+        powerUpUI.icon.destroy();
+        powerUpUI.timeText.destroy();
+        powerUpUI.nameText.destroy();
+
+        // Remove from tracking
+        delete this.temporaryPowerUps[powerUpType];
+
+        // Reposition remaining power-ups
+        this.repositionTemporaryPowerUpUI();
+
+        console.log(`Removed temporary power-up UI: ${powerUpType}`);
+    }
+
+// NEW: Update all temporary power-up timers
+    updateTemporaryPowerUpUI() {
+        const currentTime = Date.now();
+
+        Object.keys(this.temporaryPowerUps).forEach(powerUpType => {
+            const powerUpUI = this.temporaryPowerUps[powerUpType];
+            const timeRemaining = Math.max(0, powerUpUI.endTime - currentTime);
+            const progress = timeRemaining / powerUpUI.duration;
+
+            // Update progress bar width
+            powerUpUI.progressBar.width = powerUpUI.originalWidth * progress;
+
+            // Update time text
+            const seconds = Math.ceil(timeRemaining / 1000);
+            powerUpUI.timeText.setText(`${seconds}s`);
+
+            // Change color based on time remaining
+            if (progress <= 0.2) {
+                powerUpUI.progressBar.setFillStyle(0xff4444); // Red when almost expired
+                powerUpUI.timeText.setColor('#ff4444');
+            } else if (progress <= 0.5) {
+                powerUpUI.progressBar.setFillStyle(0xffaa44); // Orange when half expired
+                powerUpUI.timeText.setColor('#ffaa44');
+            }
+
+            // Remove if expired
+            if (timeRemaining <= 0) {
+                this.removeTemporaryPowerUpUI(powerUpType);
+            }
+        });
+    }
+
+// NEW: Reposition power-up UIs after one is removed
+    repositionTemporaryPowerUpUI() {
+        let index = 0;
+        Object.values(this.temporaryPowerUps).forEach(powerUpUI => {
+            const newY = 120 + (index * 40);
+
+            // Animate to new position
+            this.tweens.add({
+                targets: [powerUpUI.bgBar, powerUpUI.progressBar, powerUpUI.icon, powerUpUI.timeText, powerUpUI.nameText],
+                y: newY,
+                duration: 200,
+                ease: 'Power2'
+            });
+
+            index++;
+        });
+    }
+
+// NEW: Get icon for each power-up type
+    getPowerUpIcon(powerUpType) {
+        switch (powerUpType) {
+            case 'circularPattern': return '⭕';
+            case 'explosiveBullets': return '💥';
+            case 'coneSpray': return '🌊';
+            case 'explosiveCircular': return '💫';
+            default: return '⚡';
+        }
+    }
     initPlayerHealthBars() {
-        const healthBarWidth = 200;
-        const healthBarHeight = 24;
-        const margin = 20;
-        const labelHeight = 30;
+        try {
+            const healthBarWidth = 200;
+            const healthBarHeight = 24;
+            const margin = 20;
+            const labelHeight = 30;
 
-        // Positions for up to 4 players
-        const positions = [
-            { x: margin, y: this.scale.height - margin - healthBarHeight - labelHeight }, // Bottom left - Player 1
-            { x: this.scale.width - margin - healthBarWidth, y: this.scale.height - margin - healthBarHeight - labelHeight }, // Bottom right - Player 2
-            { x: margin, y: margin + labelHeight }, // Top left - Player 3
-            { x: this.scale.width - margin - healthBarWidth, y: margin + labelHeight } // Top right - Player 4
-        ];
-
-        const colors = [
-            0x00ff00, // Green for Player 1
-            0x0066ff, // Blue for Player 2
-            0xff6600, // Orange for Player 3
-            0xff0066  // Pink for Player 4
-        ];
-
-        for (let i = 1; i <= 4; i++) {
-            const pos = positions[i - 1];
+            // Position for Player 1 (bottom left)
+            const pos = { x: margin, y: this.scale.height - margin - healthBarHeight - labelHeight };
+            const color = 0x00ff00; // Green for Player 1
 
             // Create player label
-            const label = this.add.text(pos.x, pos.y - labelHeight, `Player ${i}`, {
+            const label = this.add.text(pos.x, pos.y - labelHeight, 'Player 1', {
                 fontFamily: 'Arial Black',
                 fontSize: 18,
                 color: '#ffffff',
                 stroke: '#000000',
                 strokeThickness: 4,
-            })
-                .setDepth(100)
-                .setVisible(i === 1); // Only show Player 1 initially
+            });
+            label.setDepth(100);
 
             // Create health bar background
-            const healthBarBg = this.add.rectangle(pos.x, pos.y, healthBarWidth, healthBarHeight, 0x333333)
-                .setOrigin(0, 0)
-                .setStrokeStyle(2, 0xffffff)
-                .setDepth(100)
-                .setVisible(i === 1);
+            const healthBarBg = this.add.rectangle(pos.x, pos.y, healthBarWidth, healthBarHeight, 0x333333);
+            healthBarBg.setOrigin(0, 0);
+            healthBarBg.setStrokeStyle(2, 0xffffff);
+            healthBarBg.setDepth(100);
 
             // Create health bar fill
-            const healthBarFill = this.add.rectangle(pos.x + 2, pos.y + 2, healthBarWidth - 4, healthBarHeight - 4, colors[i - 1])
-                .setOrigin(0, 0)
-                .setDepth(101)
-                .setVisible(i === 1);
+            const healthBarFill = this.add.rectangle(pos.x + 2, pos.y + 2, healthBarWidth - 4, healthBarHeight - 4, color);
+            healthBarFill.setOrigin(0, 0);
+            healthBarFill.setDepth(101);
 
             // Create health text
             const healthText = this.add.text(pos.x + healthBarWidth / 2, pos.y + healthBarHeight / 2, '5/5', {
@@ -205,20 +384,27 @@ export class Game extends Phaser.Scene {
                 color: '#ffffff',
                 stroke: '#000000',
                 strokeThickness: 2,
-            })
-                .setOrigin(0.5)
-                .setDepth(102)
-                .setVisible(i === 1);
+            });
+            healthText.setOrigin(0.5);
+            healthText.setDepth(102);
 
-            // Store references
-            this.playerHealthBars[i] = {
-                label: label,
-                background: healthBarBg,
-                fill: healthBarFill,
-                text: healthText,
-                maxWidth: healthBarWidth - 4,
-                visible: i === 1
+            // Store references for Player 1 only
+            this.playerHealthBars = {
+                1: {
+                    label: label,
+                    background: healthBarBg,
+                    fill: healthBarFill,
+                    text: healthText,
+                    maxWidth: healthBarWidth - 4,
+                    visible: true
+                }
             };
+
+            console.log('Player health bars initialized');
+
+        } catch (error) {
+            console.error('Error initializing health bars:', error);
+            this.playerHealthBars = {};
         }
     }
 
@@ -284,7 +470,7 @@ export class Game extends Phaser.Scene {
         this.enemyGroup = this.add.group();
         this.enemyBulletGroup = this.add.group();
         this.playerBulletGroup = this.add.group();
-
+        this.bossGroup = this.add.group();
         // Initialize power-up manager
         this.powerUpManager = new PowerUpManager(this);
 
@@ -292,8 +478,17 @@ export class Game extends Phaser.Scene {
         this.physics.add.overlap(this.playerBulletGroup, this.enemyGroup, this.hitEnemy, null, this);
         this.physics.add.overlap(this.player, this.enemyGroup, this.hitPlayer, null, this);
         this.physics.add.overlap(this.player, this.powerUpManager.getPowerUpGroup(), this.collectPowerUp, null, this);
+        this.physics.add.overlap(this.playerBulletGroup, this.bossGroup, this.hitBoss, null, this);
+        this.physics.add.overlap(this.player, this.bossGroup, this.hitPlayer, null, this);
     }
+    hitBoss(bullet, boss) {
+        bullet.remove();
 
+        // Use the bullet's power directly (already boosted from player)
+        boss.hit(bullet.getPower());
+
+        // Don't give score for hitting boss (only when killed)
+    }
     initPlayer() {
         const currentShipId = this.playerShipTypes[this.currentPlayerShipIndex];
         this.player = new Player(this, this.centreX, this.scale.height - 100, currentShipId, 1); // Pass player ID
@@ -364,12 +559,18 @@ export class Game extends Phaser.Scene {
 
     startGame() {
         this.gameStarted = true;
-        this.tutorialText.setVisible(false);
+
+        // Check if tutorialText exists before trying to hide it
+        if (this.tutorialText) {
+            this.tutorialText.setVisible(false);
+        }
+
         this.addFlyingGroup();
     }
 
-    fireBullet(x, y, power = 1) {
-        const bullet = new PlayerBullet(this, x, y, power);
+    // Updated fireBullet method to handle explosive bullets
+    fireBullet(x, y, power = 1, isExplosive = false) {
+        const bullet = new PlayerBullet(this, x, y, power, isExplosive);
         this.playerBulletGroup.add(bullet);
     }
 
@@ -392,7 +593,22 @@ export class Game extends Phaser.Scene {
     removeBullet(bullet) {
         this.playerBulletGroup.remove(bullet, true, true);
     }
+    removeBoss(boss) {
+        if (this.currentBoss === boss) {
+            this.currentBoss = null;
 
+            // Resume normal enemy spawning after a delay
+            this.time.delayedCall(2000, () => {
+                if (!this.currentBoss) { // Make sure no new boss spawned
+                    this.addFlyingGroup();
+                }
+            });
+
+            console.log('Boss defeated! Resuming normal enemy spawning.');
+        }
+
+        this.bossGroup.remove(boss, true, true);
+    }
     fireEnemyBullet(x, y, power) {
         const bullet = new EnemyBullet(this, x, y, power);
         this.enemyBulletGroup.add(bullet);
@@ -404,7 +620,7 @@ export class Game extends Phaser.Scene {
 
         // Convert angle to radians and calculate velocity components
         const angleRadians = Phaser.Math.DegToRad(angleDegrees);
-        const speed = 200; // Enemy bullet speed
+        const speed = 200 * (0.5 + power * 0.1); // Slightly faster for higher power
         const velocityX = Math.sin(angleRadians) * speed;
         const velocityY = Math.cos(angleRadians) * speed; // Positive because enemy bullets go down
 
@@ -420,27 +636,30 @@ export class Game extends Phaser.Scene {
 
     // add a group of flying enemies with varied types and higher difficulty
     addFlyingGroup() {
-        this.spawnEnemyCounter = Phaser.Math.RND.between(3, 6) * 60; // Spawn enemies more frequently (was 5-8)
+        // Don't spawn regular enemies if boss is active
+        if (this.currentBoss) return;
+
+        this.spawnEnemyCounter = Phaser.Math.RND.between(3, 6) * 60;
 
         // Choose enemy type based on difficulty level
         const availableEnemyTypes = this.getAvailableEnemyTypes();
         const randomEnemyType = Phaser.Math.RND.pick(availableEnemyTypes);
 
-        const randomCount = Phaser.Math.RND.between(8, 20); // More enemies per wave (was 5-15)
-        const randomInterval = Phaser.Math.RND.between(6, 10) * 100; // Faster spawning (was 8-12)
-        const randomPath = Phaser.Math.RND.between(0, 3); // choose a path, a group follows the same path
-        const randomPower = Math.min(Phaser.Math.RND.between(1, 6) + Math.floor(this.difficultyLevel / 2), 8); // Stronger enemy bullets based on level
-        const randomSpeed = Phaser.Math.RND.realInRange(0.0002, 0.002); // Faster enemy movement (was 0.0001-0.001)
+        const randomCount = Phaser.Math.RND.between(8, 20);
+        const randomInterval = Phaser.Math.RND.between(6, 10) * 100;
+        const randomPath = Phaser.Math.RND.between(0, 3);
 
-        this.timedEvent = this.time.addEvent(
-            {
-                delay: randomInterval,
-                callback: this.addEnemy,
-                args: [randomEnemyType, randomPath, randomSpeed, randomPower], // parameters passed to addEnemy()
-                callbackScope: this,
-                repeat: randomCount
-            }
-        );
+        // FIXED: Much more gradual enemy power scaling
+        const randomPower = Math.min(1 + Math.floor(this.difficultyLevel / 5), 4); // Was: Math.min(1 + Math.floor(level / 2), 8)
+        const randomSpeed = Phaser.Math.RND.realInRange(0.0002, 0.002);
+
+        this.timedEvent = this.time.addEvent({
+            delay: randomInterval,
+            callback: this.addEnemy,
+            args: [randomEnemyType, randomPath, randomSpeed, randomPower],
+            callbackScope: this,
+            repeat: randomCount
+        });
 
         console.log(`Spawning ${randomCount + 1} ${randomEnemyType.name} enemies (${randomEnemyType.shootPattern} pattern) with power ${randomPower}`);
     }
@@ -481,6 +700,8 @@ export class Game extends Phaser.Scene {
     hitEnemy(bullet, enemy) {
         this.updateScore(10);
         bullet.remove();
+
+        // Use the bullet's power directly (already boosted from player)
         enemy.hit(bullet.getPower());
     }
 
@@ -499,13 +720,15 @@ export class Game extends Phaser.Scene {
 
         if (this.score >= nextThreshold) {
             this.levelUp();
+
+            // Check for boss spawn after level up
+            this.checkBossSpawn();
         }
 
         // Update progress text
         const currentThreshold = this.calculateFibonacci(this.difficultyLevel);
         this.progressText.setText(`Next: ${currentThreshold}`);
     }
-
 
     // NEW: Level up system with player bonuses and ship changes
     levelUp() {
@@ -532,11 +755,13 @@ export class Game extends Phaser.Scene {
     }
 
     // NEW: Upgrade player ship every 6 levels with enhanced stats preservation
+// UPDATE the upgradePlayerShip() method in Game.js to preserve attack types:
+
     upgradePlayerShip() {
         this.currentPlayerShipIndex = (this.currentPlayerShipIndex + 1) % this.playerShipTypes.length;
         const newShipId = this.playerShipTypes[this.currentPlayerShipIndex];
 
-        // Store player stats including new scaling properties
+        // Store player stats - DON'T store scale values, recalculate them
         const playerStats = {
             health: this.player.health,
             maxHealth: this.player.maxHealth,
@@ -546,7 +771,18 @@ export class Game extends Phaser.Scene {
             scaleX: this.player.scaleX,
             scaleY: this.player.scaleY,
             x: this.player.x,
-            y: this.player.y
+            y: this.player.y,
+            level: this.difficultyLevel, // Store level for scale calculation
+
+            // PRESERVE ATTACK TYPES
+            hasCircularPattern: this.player.hasCircularPattern,
+            hasConeSpray: this.player.hasConeSpray,
+            hasExplosiveCircular: this.player.hasExplosiveCircular,
+            hasExplosiveBullets: this.player.hasExplosiveBullets,
+
+            // PRESERVE FIRE RATE BACKUPS
+            originalFireRate: this.player.originalFireRate,
+            originalFireRateCircular: this.player.originalFireRateCircular
         };
 
         // Remove old player
@@ -564,6 +800,16 @@ export class Game extends Phaser.Scene {
 
         // Restore scaling
         this.player.setScale(playerStats.scaleX, playerStats.scaleY);
+
+        // RESTORE ATTACK TYPES
+        this.player.hasCircularPattern = playerStats.hasCircularPattern;
+        this.player.hasConeSpray = playerStats.hasConeSpray;
+        this.player.hasExplosiveCircular = playerStats.hasExplosiveCircular;
+        this.player.hasExplosiveBullets = playerStats.hasExplosiveBullets;
+
+        // RESTORE FIRE RATE BACKUPS
+        this.player.originalFireRate = playerStats.originalFireRate;
+        this.player.originalFireRateCircular = playerStats.originalFireRateCircular;
 
         // Update hitbox for current scale
         const hitboxScale = Math.min(playerStats.scaleX, 1.3);
@@ -585,6 +831,7 @@ export class Game extends Phaser.Scene {
 
         console.log(`Player ship upgraded to type ${newShipId} (index ${this.currentPlayerShipIndex})`);
         console.log(`Ship scale: ${playerStats.scaleX.toFixed(2)}x, Base damage: ${playerStats.baseDamage}`);
+        console.log(`Attack types preserved: Circular=${this.player.hasCircularPattern}, Cone=${this.player.hasConeSpray}, ExplosiveCirc=${this.player.hasExplosiveCircular}, ExplosiveBullets=${this.player.hasExplosiveBullets}`);
     }
 
     // NEW: Ship upgrade visual effect
@@ -795,7 +1042,103 @@ export class Game extends Phaser.Scene {
         }
         this.restartText.setVisible(true);
     }
+    checkBossSpawn() {
+        if (this.difficultyLevel % 5 === 0 && this.difficultyLevel > this.lastBossLevel && !this.currentBoss) {
+            this.spawnBoss();
+            this.lastBossLevel = this.difficultyLevel;
+        }
+    }
 
+    showBossWarning(bossType) {
+        // Warning text
+        const warningText = this.add.text(this.scale.width / 2, this.scale.height / 2,
+            'WARNING!\nBOSS APPROACHING!', {
+                fontFamily: 'Arial Black',
+                fontSize: 48,
+                color: '#ff0000',
+                stroke: '#000000',
+                strokeThickness: 8,
+                align: 'center'
+            }).setOrigin(0.5).setDepth(1000);
+
+        // Boss type text
+        const bossTypeText = this.add.text(this.scale.width / 2, this.scale.height / 2 + 100,
+            bossType.name.toUpperCase(), {
+                fontFamily: 'Arial Black',
+                fontSize: 32,
+                color: Phaser.Display.Color.IntegerToRGB(bossType.color),
+                stroke: '#000000',
+                strokeThickness: 6,
+                align: 'center'
+            }).setOrigin(0.5).setDepth(1000);
+
+        // Screen effects
+        this.cameras.main.shake(500, 0.01);
+
+        // Flash effect
+        const flash = this.add.rectangle(this.scale.width/2, this.scale.height/2,
+            this.scale.width, this.scale.height, 0xff0000, 0.3);
+        flash.setDepth(999);
+
+        // Animate warning
+        this.tweens.add({
+            targets: [warningText, bossTypeText],
+            scaleX: 1.2,
+            scaleY: 1.2,
+            alpha: 0,
+            duration: 2000,
+            ease: 'Power2',
+            onComplete: () => {
+                warningText.destroy();
+                bossTypeText.destroy();
+            }
+        });
+
+        this.tweens.add({
+            targets: flash,
+            alpha: 0,
+            duration: 1000,
+            ease: 'Power2',
+            onComplete: () => flash.destroy()
+        });
+    }
+
+    spawnBoss() {
+        if (this.currentBoss) return; // Don't spawn if boss already exists
+
+        // Get the current boss type (rotates through all 4)
+        const bossType = BOSS_TYPES[this.bossTypeIndex];
+        this.bossTypeIndex = (this.bossTypeIndex + 1) % BOSS_TYPES.length;
+
+        // Create the boss
+        this.currentBoss = new BossEnemy(this, bossType, this.difficultyLevel);
+        this.bossGroup.add(this.currentBoss);
+
+        // Stop regular enemy spawning while boss is active
+        if (this.timedEvent) {
+            this.timedEvent.destroy();
+            this.timedEvent = null;
+        }
+
+        // Show boss warning
+        this.showBossWarning(bossType);
+
+        console.log(`Boss spawned: ${bossType.name} at level ${this.difficultyLevel}`);
+    }
+    fireEnemyBulletAngled(x, y, power, angleDegrees) {
+        const bullet = new EnemyBullet(this, x, y, power);
+
+        // Convert angle to radians and calculate velocity components
+        const angleRadians = Phaser.Math.DegToRad(angleDegrees);
+        const speed = 200 * (0.5 + power * 0.1); // Slightly faster for higher power
+        const velocityX = Math.sin(angleRadians) * speed;
+        const velocityY = Math.cos(angleRadians) * speed; // Positive because enemy bullets go down
+
+        // Set the bullet's velocity
+        bullet.setVelocity(velocityX, velocityY);
+
+        this.enemyBulletGroup.add(bullet);
+    }
     collectPowerUp(player, powerUp) {
         this.powerUpManager.handleCollision(player, powerUp);
     }
