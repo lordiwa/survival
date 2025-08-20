@@ -8,7 +8,6 @@ export default class Player extends Phaser.Physics.Arcade.Sprite {
     fireCounter = 0;
     maxHealth = 5; // Maximum health points
     health = 5; // Current health points
-    playerId = 1; // Player ID for multiplayer support later
     invulnerabilityTime = 1000; // 1 second of invulnerability after being hit
     invulnerable = false;
     flashTimer = 0;
@@ -16,13 +15,19 @@ export default class Player extends Phaser.Physics.Arcade.Sprite {
     bulletPower = 1; // Bullet damage power
     baseDamage = 1; // Base damage bonus from leveling up
 
-    constructor(scene, x, y, shipId, playerId = 1) {
+    // Controller support variables
+    gamepadIndex = -1; // Specific gamepad index for this player
+    deadzone = 0.15; // Deadzone for analog sticks
+    triggerThreshold = 0.1; // Threshold for trigger sensitivity
+
+    constructor(scene, x, y, shipId, playerId = 1, gamepadIndex = -1) {
         super(scene, x, y, ASSETS.spritesheet.ships.key, shipId);
 
         scene.add.existing(this);
         scene.physics.add.existing(this);
 
         this.playerId = playerId;
+        this.gamepadIndex = gamepadIndex; // Assign specific controller
         this.setCollideWorldBounds(true); // prevent ship from leaving the screen
         this.setDepth(100); // make ship appear on top of other game objects
         this.scene = scene;
@@ -31,6 +36,16 @@ export default class Player extends Phaser.Physics.Arcade.Sprite {
 
         // Initialize health UI
         this.scene.updatePlayerHealthUI(this.playerId, this.health, this.maxHealth);
+
+        console.log(`Player ${this.playerId} created with controller index ${this.gamepadIndex}`);
+    }
+
+    getGamepad() {
+        if (this.gamepadIndex >= 0 && navigator.getGamepads) {
+            const gamepads = navigator.getGamepads();
+            return gamepads[this.gamepadIndex] || null;
+        }
+        return null;
     }
 
     preUpdate(time, delta) {
@@ -51,29 +66,106 @@ export default class Player extends Phaser.Physics.Arcade.Sprite {
     }
 
     checkInput() {
-        const cursors = this.scene.cursors; // get cursors object from Game scene
-        const leftKey = cursors.left.isDown;
-        const rightKey = cursors.right.isDown;
-        const upKey = cursors.up.isDown;
-        const downKey = cursors.down.isDown;
-        const spaceKey = cursors.space.isDown;
+        let moveDirection = { x: 0, y: 0 };
+        let shouldFire = false;
 
-        const moveDirection = { x: 0, y: 0 }; // default move direction
+        // Get input from assigned controller
+        const gamepad = this.getGamepad();
+        if (gamepad) {
+            const controllerInput = this.getControllerInput(gamepad);
+            moveDirection = controllerInput.movement;
+            shouldFire = controllerInput.shouldFire;
+        } else if (this.playerId === 1) {
+            // Fallback to keyboard for Player 1 only if no controller
+            const cursors = this.scene.cursors;
+            const leftKey = cursors.left.isDown;
+            const rightKey = cursors.right.isDown;
+            const upKey = cursors.up.isDown;
+            const downKey = cursors.down.isDown;
+            const spaceKey = cursors.space.isDown;
 
-        if (leftKey) moveDirection.x--;
-        if (rightKey) moveDirection.x++;
-        if (upKey) moveDirection.y--;
-        if (downKey) moveDirection.y++;
-        if (spaceKey) this.fire();
+            if (leftKey) moveDirection.x--;
+            if (rightKey) moveDirection.x++;
+            if (upKey) moveDirection.y--;
+            if (downKey) moveDirection.y++;
+            shouldFire = spaceKey;
+        }
 
-        this.body.velocity.x += moveDirection.x * this.velocityIncrement; // increase horizontal velocity
-        this.body.velocity.y += moveDirection.y * this.velocityIncrement; // increase vertical velocity
+        // Apply movement
+        this.body.velocity.x += moveDirection.x * this.velocityIncrement;
+        this.body.velocity.y += moveDirection.y * this.velocityIncrement;
+
+        // Handle firing
+        if (shouldFire) {
+            this.fire();
+        }
+    }
+
+    getControllerInput(gamepad) {
+        if (!gamepad) {
+            return { movement: { x: 0, y: 0 }, shouldFire: false };
+        }
+
+        // Xbox 360 Controller mapping:
+        // Left stick: axes[0] = X, axes[1] = Y
+        const leftStickX = gamepad.axes[0] || 0;
+        const leftStickY = gamepad.axes[1] || 0;
+
+        // Handle movement with deadzone
+        const movement = { x: 0, y: 0 };
+
+        if (Math.abs(leftStickX) > this.deadzone) {
+            movement.x = leftStickX;
+        }
+
+        if (Math.abs(leftStickY) > this.deadzone) {
+            movement.y = leftStickY;
+        }
+
+        // Handle shooting - try multiple methods for trigger detection
+        let triggerPressed = false;
+
+        // Method 1: Try right trigger as button (index 7)
+        if (gamepad.buttons[7] && gamepad.buttons[7].pressed) {
+            triggerPressed = true;
+        }
+
+        // Method 2: Try right trigger as axis (usually axes[5] or axes[2])
+        if (!triggerPressed) {
+            // Check axes[5] (right trigger on some browsers)
+            if (gamepad.axes[5] !== undefined && gamepad.axes[5] > this.triggerThreshold) {
+                triggerPressed = true;
+            }
+            // Check axes[2] (alternative trigger mapping)
+            else if (gamepad.axes[2] !== undefined && gamepad.axes[2] > this.triggerThreshold) {
+                triggerPressed = true;
+            }
+        }
+
+        // Method 3: Try A button as alternative (button 0)
+        if (!triggerPressed && gamepad.buttons[0] && gamepad.buttons[0].pressed) {
+            triggerPressed = true;
+        }
+
+        return {
+            movement: movement,
+            shouldFire: triggerPressed
+        };
     }
 
     fire() {
         if (this.fireCounter > 0) return;
 
-        this.fireCounter = this.fireRate;
+        // Apply fire rate penalties for special patterns
+        let fireRateMultiplier = 1;
+
+        if (this.hasExplosiveCircular || this.hasCircularPattern) {
+            fireRateMultiplier = 2; // 2x slower for circular patterns
+        } else if (this.hasConeSpray) {
+            fireRateMultiplier = 1.5; // 1.5x slower for cone spray
+        }
+
+        this.fireCounter = this.fireRate * fireRateMultiplier;
 
         // Calculate total damage with stronger early game boost
         const level = this.scene.difficultyLevel || 1;
@@ -106,20 +198,20 @@ export default class Player extends Phaser.Physics.Arcade.Sprite {
         }
     }
 
-    // Fire explosive circular pattern (12 bullets in 360°)
+    // Fire explosive circular pattern (8 bullets in 360° instead of 12)
     fireExplosiveCircular(totalDamage) {
-        const bulletCount = 12;
+        const bulletCount = 8; // Reduced from 12
         for (let i = 0; i < bulletCount; i++) {
             const angle = (360 / bulletCount) * i;
             this.scene.fireDiagonalBullet(this.x, this.y, angle, totalDamage);
         }
     }
 
-    // Fire cone spray pattern (15 bullets in 90° cone, half damage)
+    // Fire cone spray pattern (10 bullets in 90° cone instead of 15, half damage)
     fireConeSpray(totalDamage) {
-        const bulletCount = 15;
+        const bulletCount = 10; // Reduced from 15
         const coneAngle = 90;
-        const coneDamage = Math.max(1, Math.floor(totalDamage * 0.5)); // Half damage
+        const coneDamage = Math.max(1, Math.floor(totalDamage * 0.6)); // Increased damage from 0.5 to 0.6
 
         for (let i = 0; i < bulletCount; i++) {
             const angle = -45 + (90 / (bulletCount - 1)) * i; // -45° to +45°
@@ -127,9 +219,9 @@ export default class Player extends Phaser.Physics.Arcade.Sprite {
         }
     }
 
-    // Fire circular pattern (8 bullets in 360°)
+    // Fire circular pattern (6 bullets in 360° instead of 8)
     fireCircularPattern(totalDamage) {
-        const bulletCount = 8;
+        const bulletCount = 6; // Reduced from 8
         for (let i = 0; i < bulletCount; i++) {
             const angle = (360 / bulletCount) * i;
             this.scene.fireDiagonalBullet(this.x, this.y, angle, totalDamage);
@@ -200,7 +292,10 @@ export default class Player extends Phaser.Physics.Arcade.Sprite {
             // Screen shake effect
             this.scene.cameras.main.shake(200, 0.01);
 
-            console.log(`Player took ${cappedDamage} damage (was ${damage}) at level ${level}`);
+            // Add controller vibration feedback
+            this.vibrateController(300, 0.7, 1.0);
+
+            console.log(`Player ${this.playerId} took ${cappedDamage} damage (was ${damage}) at level ${level}`);
         }
     }
 
@@ -222,13 +317,13 @@ export default class Player extends Phaser.Physics.Arcade.Sprite {
 
     increaseMaxHealth(amount = 1) {
         this.maxHealth += amount;
-        console.log(`Max health increased to: ${this.maxHealth}`);
+        console.log(`Player ${this.playerId} max health increased to: ${this.maxHealth}`);
     }
 
     fullHeal() {
         this.health = this.maxHealth;
         this.scene.updatePlayerHealthUI(this.playerId, this.health, this.maxHealth);
-        console.log(`Player fully healed to: ${this.health}/${this.maxHealth}`);
+        console.log(`Player ${this.playerId} fully healed to: ${this.health}/${this.maxHealth}`);
     }
 
     improveFireRate(speedIncrease) {
@@ -258,7 +353,7 @@ export default class Player extends Phaser.Physics.Arcade.Sprite {
         this.scene.showFloatingText(this.x, this.y - 40,
             `ATTACK SPEED: ${speedPercentage}%`, 0x00ffff, 20);
 
-        console.log(`Fire rate improved from ${oldFireRate} to ${this.fireRate} (Speed: ${speedPercentage}%) - Level ${level} scaling: ${actualSpeedIncrease}`);
+        console.log(`Player ${this.playerId} fire rate improved from ${oldFireRate} to ${this.fireRate} (Speed: ${speedPercentage}%) - Level ${level} scaling: ${actualSpeedIncrease}`);
         return this.fireRate;
     }
 
@@ -267,8 +362,55 @@ export default class Player extends Phaser.Physics.Arcade.Sprite {
     }
 
     die() {
-        this.scene.addExplosion(this.x, this.y);
-        this.scene.GameOver();
+        console.log(`Player ${this.playerId} has died!`);
+
+        // Store position and scene reference before destruction
+        const deathX = this.x;
+        const deathY = this.y;
+        const scene = this.scene;
+
+        // Create death explosion safely
+        if (scene && scene.addExplosion) {
+            scene.addExplosion(deathX, deathY);
+        }
+
+        // Show death message
+        if (scene && scene.showFloatingText) {
+            scene.showFloatingText(deathX, deathY - 50, `PLAYER ${this.playerId}\nDEFEAT!`, 0xff0000, 24);
+        }
+
+        // Screen effects
+        if (scene && scene.cameras && scene.cameras.main) {
+            scene.cameras.main.shake(400, 0.02);
+        }
+
+        // Controller vibration for death
+        this.vibrateController(800, 1.0, 1.0);
+
+        // Notify scene of player death BEFORE destroying
+        if (scene && scene.onPlayerDeath) {
+            scene.onPlayerDeath(this.playerId);
+        }
+
+        // Remove from player group
+        if (scene && scene.playerGroup) {
+            scene.playerGroup.remove(this);
+        }
+
+        // Multiple explosions for dramatic effect with safety checks
+        for (let i = 1; i < 4; i++) {
+            if (scene && scene.time) {
+                scene.time.delayedCall(i * 150, () => {
+                    // Double-check scene is still valid and active
+                    if (scene && scene.addExplosion && scene.scene && scene.scene.isActive()) {
+                        const offsetX = Phaser.Math.Between(-30, 30);
+                        const offsetY = Phaser.Math.Between(-30, 30);
+                        scene.addExplosion(deathX + offsetX, deathY + offsetY);
+                    }
+                });
+            }
+        }
+
         this.destroy(); // destroy sprite so it is no longer updated
     }
 
@@ -278,5 +420,31 @@ export default class Player extends Phaser.Physics.Arcade.Sprite {
 
     getCurrentHealth() {
         return this.health;
+    }
+
+    // NEW: Get controller status for debugging
+    getControllerStatus() {
+        const gamepad = this.getGamepad();
+        return {
+            playerId: this.playerId,
+            gamepadIndex: this.gamepadIndex,
+            connected: !!gamepad,
+            gamepadId: gamepad ? gamepad.id : 'None'
+        };
+    }
+
+    // NEW: Vibrate controller if supported (for hit feedback)
+    vibrateController(duration = 200, weakMagnitude = 0.5, strongMagnitude = 0.8) {
+        const gamepad = this.getGamepad();
+        if (gamepad && gamepad.vibrationActuator) {
+            gamepad.vibrationActuator.playEffect('dual-rumble', {
+                duration: duration,
+                weakMagnitude: weakMagnitude,
+                strongMagnitude: strongMagnitude
+            }).catch(err => {
+                // Vibration not supported, ignore silently
+                console.log(`Vibration not supported for Player ${this.playerId}`);
+            });
+        }
     }
 }

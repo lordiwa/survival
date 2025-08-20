@@ -17,25 +17,40 @@ export class Game extends Phaser.Scene {
         super('Game');
     }
 
-create() {
-    console.log('Game scene created');
-    console.log('Scene scale:', this.scale.width, 'x', this.scale.height);
+    create() {
+        console.log('Game scene created');
+        console.log('Scene scale:', this.scale.width, 'x', this.scale.height);
 
-    this.initVariables();
-    this.initGameUi();
-    this.initAnimations();
-    this.initPlayer();
-    this.initInput();
-    this.initPhysics();
-    this.initMap();
-}
+        this.initVariables();
+        this.initGameUi();
+        this.initAnimations();
+        this.initControllers();
+        this.initInput();
+        this.initPhysics();
+        this.initMap();
+
+        // Don't initialize players yet - wait for START button
+    }
 
     update() {
         this.updateMap();
 
+        // Check for new controllers wanting to join
+        if (this.gameStarted) {
+            this.checkForNewPlayers();
+        }
+
         if (!this.gameStarted) return;
 
-        this.player.update();
+        // Update all active players
+        this.players.forEach(player => {
+            if (player && player.active) {
+                player.update();
+            }
+        });
+
+        // Performance optimization - clean up excess bullets
+        this.cleanupExcessBullets();
 
         // Enemy spawning
         if (this.spawnEnemyCounter > 0) this.spawnEnemyCounter--;
@@ -43,6 +58,36 @@ create() {
 
         // Power-up spawning
         this.powerUpManager.update(this.game.loop.delta);
+
+        // Check for game over (all players dead)
+        this.checkGameOver();
+    }
+
+    // NEW: Clean up bullets to prevent performance issues
+    cleanupExcessBullets() {
+        this.bulletCleanupTimer++;
+
+        // Check every 60 frames (1 second at 60fps)
+        if (this.bulletCleanupTimer >= 60) {
+            this.bulletCleanupTimer = 0;
+
+            const totalBullets = this.playerBulletGroup.children.size + this.enemyBulletGroup.children.size;
+
+            if (totalBullets > this.maxBullets) {
+                // Remove oldest player bullets first
+                const excessCount = totalBullets - this.maxBullets;
+                const bulletsToRemove = Math.min(excessCount, this.playerBulletGroup.children.size);
+
+                for (let i = 0; i < bulletsToRemove; i++) {
+                    const bullet = this.playerBulletGroup.children.entries[i];
+                    if (bullet) {
+                        this.playerBulletGroup.remove(bullet, true, true);
+                    }
+                }
+
+                console.log(`Cleaned up ${bulletsToRemove} bullets for performance`);
+            }
+        }
     }
 
     initVariables() {
@@ -53,11 +98,39 @@ create() {
         this.bossGroup = null;
         this.lastBossLevel = 0;
         this.bossTypeIndex = 0;
+
+        // Game state
+        this.gameStarted = false;
+        this.waitingForStart = true;
+
+        // Multiplayer variables
+        this.players = new Array(4).fill(null); // Array to hold all players (max 4)
+        this.activePlayers = 0; // Count of active players
+        this.connectedControllers = []; // Track connected controllers
+        this.maxPlayers = 4;
+        this.lastControllerCheck = 0; // For checking new controllers
+
         // Player health UI configuration
         this.playerHealthBars = {}; // Store health bar references for each player
 
         // Power-up system
         this.powerUpManager = null;
+
+        // Player starting positions for up to 4 players
+        this.playerStartPositions = [
+            { x: this.scale.width * 0.3, y: this.scale.height - 100 }, // Player 1 (left)
+            { x: this.scale.width * 0.7, y: this.scale.height - 100 }, // Player 2 (right)
+            { x: this.scale.width * 0.4, y: this.scale.height - 100 }, // Player 3 (center-left)
+            { x: this.scale.width * 0.6, y: this.scale.height - 100 }  // Player 4 (center-right)
+        ];
+
+        // Player colors for differentiation
+        this.playerColors = [
+            0x00ff00, // Green
+            0x0088ff, // Blue
+            0xff8800, // Orange
+            0xff00ff  // Magenta
+        ];
 
         // NEW: Ship progression system
         this.playerShipTypes = [8, 9, 10, 11, 0, 1, 2, 3]; // Different ship sprites for player
@@ -108,16 +181,225 @@ create() {
         this.scrollMovement = 0; // current scroll amount
         this.spawnEnemyCounter = 0; // timer before spawning next group of enemies
 
-        this.map; // reference to tile map
-        this.groundLayer; // reference to ground layer of tile map
+        // CIRCULAR_PATTERN: {
+        //     BULLET_COUNT: 6, // Reduced from 8
+        //     DURATION: 10000 // 10 seconds
+        // },
+        // EXPLOSIVE_BULLETS: {
+        //     FIRE_RATE_PENALTY: 0.6, // 40% slower instead of 50%
+        //     EXPLOSION_RADIUS: 60,
+        //     DURATION: 15000 // 15 seconds
+        // },
+        // CONE_SPRAY: {
+        //     DAMAGE_MULTIPLIER: 0.6, // Increased from 0.5
+        //     BULLET_COUNT: 10, // Reduced from 15
+        //     CONE_ANGLE: 90, // 90 degree cone
+        //     DURATION: 12000 // 12 seconds
+        // },
+        // EXPLOSIVE_CIRCULAR: {
+        //     BULLET_COUNT: 8, // Reduced from 12
+        //     FIRE_RATE_PENALTY: 0.4, // 60% slower instead of 70%
+        //     EXPLOSION_RADIUS: 40,
+        //     DURATION: 8000 // 8 seconds
+        // }
+
+        // Add performance optimization for bullet cleanup
+        this.maxBullets = 200; // Limit total bullets on screen
+        this.bulletCleanupTimer = 0;
+    }
+
+    initControllers() {
+        // Initial controller detection
+        this.updateConnectedControllers();
+
+        // Listen for controller connection/disconnection
+        window.addEventListener('gamepadconnected', (e) => {
+            console.log(`Controller connected: ${e.gamepad.id} at index ${e.gamepad.index}`);
+            this.updateConnectedControllers();
+        });
+
+        window.addEventListener('gamepaddisconnected', (e) => {
+            console.log(`Controller disconnected: ${e.gamepad.id} at index ${e.gamepad.index}`);
+            this.removeController(e.gamepad.index);
+        });
+
+        console.log(`${this.connectedControllers.length} controller(s) detected`);
+    }
+
+    updateConnectedControllers() {
+        if (!navigator.getGamepads) return;
+
+        const gamepads = navigator.getGamepads();
+        const currentControllers = [];
+
+        for (let i = 0; i < gamepads.length && currentControllers.length < this.maxPlayers; i++) {
+            if (gamepads[i]) {
+                currentControllers.push({
+                    index: i,
+                    gamepad: gamepads[i]
+                });
+            }
+        }
+
+        this.connectedControllers = currentControllers;
+        console.log(`Updated controller list: ${this.connectedControllers.length} controllers`);
+    }
+
+    removeController(gamepadIndex) {
+        // Find and remove player using this controller
+        for (let i = 0; i < this.players.length; i++) {
+            const player = this.players[i];
+            if (player && player.gamepadIndex === gamepadIndex) {
+                console.log(`Removing Player ${i + 1} due to controller disconnect`);
+                this.removePlayer(i + 1);
+                break;
+            }
+        }
+
+        // Update connected controllers list
+        this.updateConnectedControllers();
+    }
+
+    checkForNewPlayers() {
+        // Only check every 100ms to avoid spam
+        if (Date.now() - this.lastControllerCheck < 100) return;
+        this.lastControllerCheck = Date.now();
+
+        // Update controller list
+        this.updateConnectedControllers();
+
+        // Check for START button presses on unassigned controllers
+        this.connectedControllers.forEach(controller => {
+            const gamepad = controller.gamepad;
+            if (!gamepad) return;
+
+            // Check if this controller is already assigned to a player
+            const alreadyAssigned = this.players.some(player =>
+                player && player.gamepadIndex === controller.index
+            );
+
+            if (alreadyAssigned) return;
+
+            // Check for START button press (button 9 on Xbox controllers)
+            if (gamepad.buttons[9] && gamepad.buttons[9].pressed) {
+                this.addNewPlayer(controller.index);
+            }
+        });
+    }
+
+    addNewPlayer(gamepadIndex) {
+        // Find first available player slot
+        for (let i = 0; i < this.maxPlayers; i++) {
+            if (!this.players[i]) {
+                const playerId = i + 1;
+                console.log(`Adding new Player ${playerId} with controller ${gamepadIndex}`);
+
+                this.createPlayer(playerId, gamepadIndex);
+
+                // Show join message
+                const position = this.playerStartPositions[i];
+                this.showFloatingText(position.x, position.y - 50, `PLAYER ${playerId}\nJOINED!`, this.playerColors[i], 24);
+
+                return;
+            }
+        }
+
+        console.log('Cannot add new player - all slots full');
+    }
+
+    createPlayer(playerId, gamepadIndex) {
+        const position = this.playerStartPositions[playerId - 1];
+        const currentShipId = this.playerShipTypes[this.currentPlayerShipIndex];
+
+        const player = new Player(this, position.x, position.y, currentShipId, playerId, gamepadIndex);
+
+        // Set player color tint
+        player.setTint(this.playerColors[playerId - 1]);
+
+        // Apply current level progression to new player
+        this.applyCurrentProgressionToPlayer(player);
+
+        this.players[playerId - 1] = player;
+
+        // Add to physics group if game is running
+        if (this.gameStarted && this.playerGroup) {
+            this.playerGroup.add(player);
+        }
+
+        // Show health bar for this player
+        this.setPlayerHealthBarVisible(playerId, true);
+        this.updatePlayerHealthUI(playerId, player.health, player.maxHealth);
+
+        this.activePlayers++;
+        this.updatePlayersAliveUI();
+
+        console.log(`Created Player ${playerId} at position (${position.x}, ${position.y})`);
+    }
+
+    applyCurrentProgressionToPlayer(player) {
+        // Apply current level scaling to new player
+        const level = this.difficultyLevel;
+
+        // Scale health based on current level
+        const healthBonus = this.calculateHealthBonusForLevel(level);
+        player.maxHealth += healthBonus;
+        player.health = player.maxHealth;
+
+        // Scale damage based on current level
+        const damageBonus = Math.floor((level - 1) / 3);
+        player.baseDamage += damageBonus;
+
+        // Scale size based on current level
+        const sizeBonus = Math.floor((level - 1) / 2) * 0.05;
+        const newScale = 1 + sizeBonus;
+        player.setScale(newScale);
+
+        console.log(`Applied level ${level} progression to new player: ${player.health}/${player.maxHealth} HP, ${player.baseDamage} damage, ${newScale.toFixed(2)}x scale`);
+    }
+
+    calculateHealthBonusForLevel(level) {
+        let totalBonus = 0;
+        for (let i = 2; i <= level; i++) {
+            const baseBonus = 3;
+            const levelTier = Math.floor((i - 1) / 5);
+            const progressiveBonus = levelTier * 2;
+            totalBonus += baseBonus + progressiveBonus;
+        }
+        return totalBonus;
+    }
+
+    removePlayer(playerId) {
+        const player = this.players[playerId - 1];
+        if (player) {
+            if (this.playerGroup) {
+                this.playerGroup.remove(player);
+            }
+            player.destroy();
+            this.players[playerId - 1] = null;
+
+            // Hide health bar for this player
+            this.setPlayerHealthBarVisible(playerId, false);
+
+            this.activePlayers--;
+            this.updatePlayersAliveUI();
+
+            console.log(`Removed Player ${playerId}`);
+        }
     }
 
     initGameUi() {
         try {
-            // Create tutorial text
-            this.tutorialText = this.add.text(this.centreX, this.centreY, 'Tap to shoot!', {
+            // Create tutorial text with controller info
+            const controllerCount = this.connectedControllers.length;
+            let tutorialText = 'Press SPACE or any START button to begin!';
+
+            if (controllerCount > 0) {
+                tutorialText = `${controllerCount} Controller(s) Connected!\nPress START button to join game!`;
+            }
+
+            this.tutorialText = this.add.text(this.centreX, this.centreY, tutorialText, {
                 fontFamily: 'Arial Black',
-                fontSize: 42,
+                fontSize: 32,
                 color: '#ffffff',
                 stroke: '#000000',
                 strokeThickness: 8,
@@ -125,7 +407,7 @@ create() {
             });
             this.tutorialText.setOrigin(0.5);
             this.tutorialText.setDepth(100);
-            this.temporaryPowerUps = {};
+
             // Create score text
             this.scoreText = this.add.text(20, 20, 'Score: 0', {
                 fontFamily: 'Arial Black',
@@ -147,7 +429,7 @@ create() {
             this.levelText.setDepth(100);
 
             // Create next level progress text
-            this.progressText = this.add.text(20, 80, 'Next: 1000', {
+            this.progressText = this.add.text(20, 80, 'Next: 500', {
                 fontFamily: 'Arial Black',
                 fontSize: 16,
                 color: '#ffffff',
@@ -155,6 +437,17 @@ create() {
                 strokeThickness: 4,
             });
             this.progressText.setDepth(100);
+
+            // Create players alive counter
+            this.playersAliveText = this.add.text(this.scale.width - 20, 20, 'Players: 0', {
+                fontFamily: 'Arial Black',
+                fontSize: 20,
+                color: '#ffffff',
+                stroke: '#000000',
+                strokeThickness: 6,
+            });
+            this.playersAliveText.setOrigin(1, 0);
+            this.playersAliveText.setDepth(100);
 
             // Create game over text
             this.gameOverText = this.add.text(this.scale.width * 0.5, this.scale.height * 0.5, 'Game Over', {
@@ -172,235 +465,88 @@ create() {
             // Initialize health bars for up to 4 players
             this.initPlayerHealthBars();
 
-            console.log('Basic UI initialized successfully');
+            console.log('Multiplayer UI initialized successfully');
 
         } catch (error) {
             console.error('Error initializing UI:', error);
-
-            // Create minimal fallback UI
-            this.tutorialText = this.add.text(640, 360, 'Tap to shoot!', { fontSize: 32, color: '#ffffff' });
-            this.scoreText = this.add.text(20, 20, 'Score: 0', { fontSize: 24, color: '#ffffff' });
-            this.levelText = this.add.text(20, 50, 'Level: 1', { fontSize: 20, color: '#ffffff' });
-            this.progressText = this.add.text(20, 75, 'Next: 1000', { fontSize: 16, color: '#ffffff' });
-            this.gameOverText = this.add.text(640, 360, 'Game Over', { fontSize: 48, color: '#ffffff' });
-            this.gameOverText.setVisible(false);
         }
     }
 
-
-
-
-// NEW: Initialize the temporary power-up display
-    initTemporaryPowerUpUI() {
-        this.temporaryPowerUps = {}; // Track active temporary power-ups
-        this.powerUpUIContainer = this.add.group(); // Container for all power-up UI elements
-
-        console.log('Temporary power-up UI initialized');
-    }
-
-// NEW: Add a temporary power-up to the UI
-    addTemporaryPowerUpUI(powerUpType, duration, color, displayName) {
-        const startTime = Date.now();
-        const endTime = startTime + duration;
-
-        // Calculate position (stack them vertically on the right side)
-        const activeCount = Object.keys(this.temporaryPowerUps).length;
-        const x = this.scale.width - 20;
-        const y = 120 + (activeCount * 40); // Start below level text, 40px apart
-
-        // Create background bar
-        const bgBar = this.add.rectangle(x, y, 180, 30, 0x000000, 0.7)
-            .setOrigin(1, 0.5)
-            .setDepth(150);
-
-        // Create progress bar
-        const progressBar = this.add.rectangle(x - 2, y, 176, 26, color, 0.8)
-            .setOrigin(1, 0.5)
-            .setDepth(151);
-
-        // Create icon/symbol
-        const icon = this.add.text(x - 170, y, this.getPowerUpIcon(powerUpType), {
-            fontFamily: 'Arial Black',
-            fontSize: 16,
-            color: '#ffffff',
-            stroke: '#000000',
-            strokeThickness: 2
-        }).setOrigin(0, 0.5).setDepth(152);
-
-        // Create time text
-        const timeText = this.add.text(x - 10, y, '10s', {
-            fontFamily: 'Arial Black',
-            fontSize: 14,
-            color: '#ffffff',
-            stroke: '#000000',
-            strokeThickness: 2
-        }).setOrigin(1, 0.5).setDepth(152);
-
-        // Create name text
-        const nameText = this.add.text(x - 150, y, displayName, {
-            fontFamily: 'Arial',
-            fontSize: 12,
-            color: '#ffffff',
-            stroke: '#000000',
-            strokeThickness: 1
-        }).setOrigin(0, 0.5).setDepth(152);
-
-        // Store the UI elements
-        this.temporaryPowerUps[powerUpType] = {
-            startTime: startTime,
-            endTime: endTime,
-            duration: duration,
-            bgBar: bgBar,
-            progressBar: progressBar,
-            icon: icon,
-            timeText: timeText,
-            nameText: nameText,
-            originalWidth: 176
-        };
-
-        // Add to container for easy management
-        this.powerUpUIContainer.addMultiple([bgBar, progressBar, icon, timeText, nameText]);
-
-        console.log(`Added temporary power-up UI: ${displayName} for ${duration/1000}s`);
-    }
-
-// NEW: Remove a temporary power-up from the UI
-    removeTemporaryPowerUpUI(powerUpType) {
-        const powerUpUI = this.temporaryPowerUps[powerUpType];
-        if (!powerUpUI) return;
-
-        // Destroy all UI elements
-        powerUpUI.bgBar.destroy();
-        powerUpUI.progressBar.destroy();
-        powerUpUI.icon.destroy();
-        powerUpUI.timeText.destroy();
-        powerUpUI.nameText.destroy();
-
-        // Remove from tracking
-        delete this.temporaryPowerUps[powerUpType];
-
-        // Reposition remaining power-ups
-        this.repositionTemporaryPowerUpUI();
-
-        console.log(`Removed temporary power-up UI: ${powerUpType}`);
-    }
-
-// NEW: Update all temporary power-up timers
-    updateTemporaryPowerUpUI() {
-        const currentTime = Date.now();
-
-        Object.keys(this.temporaryPowerUps).forEach(powerUpType => {
-            const powerUpUI = this.temporaryPowerUps[powerUpType];
-            const timeRemaining = Math.max(0, powerUpUI.endTime - currentTime);
-            const progress = timeRemaining / powerUpUI.duration;
-
-            // Update progress bar width
-            powerUpUI.progressBar.width = powerUpUI.originalWidth * progress;
-
-            // Update time text
-            const seconds = Math.ceil(timeRemaining / 1000);
-            powerUpUI.timeText.setText(`${seconds}s`);
-
-            // Change color based on time remaining
-            if (progress <= 0.2) {
-                powerUpUI.progressBar.setFillStyle(0xff4444); // Red when almost expired
-                powerUpUI.timeText.setColor('#ff4444');
-            } else if (progress <= 0.5) {
-                powerUpUI.progressBar.setFillStyle(0xffaa44); // Orange when half expired
-                powerUpUI.timeText.setColor('#ffaa44');
-            }
-
-            // Remove if expired
-            if (timeRemaining <= 0) {
-                this.removeTemporaryPowerUpUI(powerUpType);
-            }
-        });
-    }
-
-// NEW: Reposition power-up UIs after one is removed
-    repositionTemporaryPowerUpUI() {
-        let index = 0;
-        Object.values(this.temporaryPowerUps).forEach(powerUpUI => {
-            const newY = 120 + (index * 40);
-
-            // Animate to new position
-            this.tweens.add({
-                targets: [powerUpUI.bgBar, powerUpUI.progressBar, powerUpUI.icon, powerUpUI.timeText, powerUpUI.nameText],
-                y: newY,
-                duration: 200,
-                ease: 'Power2'
-            });
-
-            index++;
-        });
-    }
-
-// NEW: Get icon for each power-up type
-    getPowerUpIcon(powerUpType) {
-        switch (powerUpType) {
-            case 'circularPattern': return '⭕';
-            case 'explosiveBullets': return '💥';
-            case 'coneSpray': return '🌊';
-            case 'explosiveCircular': return '💫';
-            default: return '⚡';
+    updatePlayersAliveUI() {
+        const alivePlayers = this.players.filter(player => player && player.active && player.health > 0).length;
+        if (this.playersAliveText) {
+            this.playersAliveText.setText(`Players: ${alivePlayers}`);
         }
     }
+
     initPlayerHealthBars() {
         try {
-            const healthBarWidth = 200;
-            const healthBarHeight = 24;
+            const healthBarWidth = 160;
+            const healthBarHeight = 20;
             const margin = 20;
-            const labelHeight = 30;
+            const labelHeight = 25;
 
-            // Position for Player 1 (bottom left)
-            const pos = { x: margin, y: this.scale.height - margin - healthBarHeight - labelHeight };
-            const color = 0x00ff00; // Green for Player 1
+            // Positions for up to 4 players
+            const positions = [
+                { x: margin, y: this.scale.height - margin - healthBarHeight - labelHeight }, // Bottom left
+                { x: this.scale.width - margin - healthBarWidth, y: this.scale.height - margin - healthBarHeight - labelHeight }, // Bottom right
+                { x: margin, y: this.scale.height - margin - (healthBarHeight + labelHeight) * 2 - 10 }, // Above player 1
+                { x: this.scale.width - margin - healthBarWidth, y: this.scale.height - margin - (healthBarHeight + labelHeight) * 2 - 10 } // Above player 2
+            ];
 
-            // Create player label
-            const label = this.add.text(pos.x, pos.y - labelHeight, 'Player 1', {
-                fontFamily: 'Arial Black',
-                fontSize: 18,
-                color: '#ffffff',
-                stroke: '#000000',
-                strokeThickness: 4,
-            });
-            label.setDepth(100);
+            // Initialize health bars for all 4 potential players
+            for (let i = 0; i < this.maxPlayers; i++) {
+                const playerId = i + 1;
+                const pos = positions[i];
+                const color = this.playerColors[i];
 
-            // Create health bar background
-            const healthBarBg = this.add.rectangle(pos.x, pos.y, healthBarWidth, healthBarHeight, 0x333333);
-            healthBarBg.setOrigin(0, 0);
-            healthBarBg.setStrokeStyle(2, 0xffffff);
-            healthBarBg.setDepth(100);
+                // Create player label
+                const label = this.add.text(pos.x, pos.y - labelHeight, `Player ${playerId}`, {
+                    fontFamily: 'Arial Black',
+                    fontSize: 16,
+                    color: Phaser.Display.Color.IntegerToRGB(color),
+                    stroke: '#000000',
+                    strokeThickness: 3,
+                });
+                label.setDepth(100);
 
-            // Create health bar fill
-            const healthBarFill = this.add.rectangle(pos.x + 2, pos.y + 2, healthBarWidth - 4, healthBarHeight - 4, color);
-            healthBarFill.setOrigin(0, 0);
-            healthBarFill.setDepth(101);
+                // Create health bar background
+                const healthBarBg = this.add.rectangle(pos.x, pos.y, healthBarWidth, healthBarHeight, 0x333333);
+                healthBarBg.setOrigin(0, 0);
+                healthBarBg.setStrokeStyle(2, 0xffffff);
+                healthBarBg.setDepth(100);
 
-            // Create health text
-            const healthText = this.add.text(pos.x + healthBarWidth / 2, pos.y + healthBarHeight / 2, '5/5', {
-                fontFamily: 'Arial Black',
-                fontSize: 14,
-                color: '#ffffff',
-                stroke: '#000000',
-                strokeThickness: 2,
-            });
-            healthText.setOrigin(0.5);
-            healthText.setDepth(102);
+                // Create health bar fill
+                const healthBarFill = this.add.rectangle(pos.x + 2, pos.y + 2, healthBarWidth - 4, healthBarHeight - 4, color);
+                healthBarFill.setOrigin(0, 0);
+                healthBarFill.setDepth(101);
 
-            // Store references for Player 1 only
-            this.playerHealthBars = {
-                1: {
+                // Create health text
+                const healthText = this.add.text(pos.x + healthBarWidth / 2, pos.y + healthBarHeight / 2, '5/5', {
+                    fontFamily: 'Arial Black',
+                    fontSize: 12,
+                    color: '#ffffff',
+                    stroke: '#000000',
+                    strokeThickness: 2,
+                });
+                healthText.setOrigin(0.5);
+                healthText.setDepth(102);
+
+                // Store references
+                this.playerHealthBars[playerId] = {
                     label: label,
                     background: healthBarBg,
                     fill: healthBarFill,
                     text: healthText,
                     maxWidth: healthBarWidth - 4,
-                    visible: true
-                }
-            };
+                    visible: false // Start hidden
+                };
 
-            console.log('Player health bars initialized');
+                // Hide by default
+                this.setPlayerHealthBarVisible(playerId, false);
+            }
+
+            console.log('Player health bars initialized for 4 players');
 
         } catch (error) {
             console.error('Error initializing health bars:', error);
@@ -410,7 +556,7 @@ create() {
 
     updatePlayerHealthUI(playerId, currentHealth, maxHealth) {
         const healthBar = this.playerHealthBars[playerId];
-        if (!healthBar) return;
+        if (!healthBar || !healthBar.visible) return;
 
         const healthPercentage = currentHealth / maxHealth;
         const newWidth = healthBar.maxWidth * healthPercentage;
@@ -424,7 +570,7 @@ create() {
         // Change color based on health percentage
         let color;
         if (healthPercentage > 0.6) {
-            color = 0x00ff00; // Green
+            color = this.playerColors[playerId - 1]; // Original player color
         } else if (healthPercentage > 0.3) {
             color = 0xffff00; // Yellow
         } else {
@@ -445,7 +591,6 @@ create() {
         }
     }
 
-    // Method to show/hide health bars for specific players (for future multiplayer)
     setPlayerHealthBarVisible(playerId, visible) {
         const healthBar = this.playerHealthBars[playerId];
         if (!healthBar) return;
@@ -471,36 +616,64 @@ create() {
         this.enemyBulletGroup = this.add.group();
         this.playerBulletGroup = this.add.group();
         this.bossGroup = this.add.group();
+        this.playerGroup = this.add.group(); // Group for all players
+
         // Initialize power-up manager
         this.powerUpManager = new PowerUpManager(this);
 
-        this.physics.add.overlap(this.player, this.enemyBulletGroup, this.hitPlayer, null, this);
+        // Set up physics overlaps (will handle multiple players automatically through groups)
+        this.physics.add.overlap(this.playerGroup, this.enemyBulletGroup, this.hitPlayer, null, this);
         this.physics.add.overlap(this.playerBulletGroup, this.enemyGroup, this.hitEnemy, null, this);
-        this.physics.add.overlap(this.player, this.enemyGroup, this.hitPlayer, null, this);
-        this.physics.add.overlap(this.player, this.powerUpManager.getPowerUpGroup(), this.collectPowerUp, null, this);
+        this.physics.add.overlap(this.playerGroup, this.enemyGroup, this.hitPlayer, null, this);
+        this.physics.add.overlap(this.playerGroup, this.powerUpManager.getPowerUpGroup(), this.collectPowerUp, null, this);
         this.physics.add.overlap(this.playerBulletGroup, this.bossGroup, this.hitBoss, null, this);
-        this.physics.add.overlap(this.player, this.bossGroup, this.hitPlayer, null, this);
+        this.physics.add.overlap(this.playerGroup, this.bossGroup, this.hitPlayer, null, this);
     }
+
     hitBoss(bullet, boss) {
         bullet.remove();
-
-        // Use the bullet's power directly (already boosted from player)
         boss.hit(bullet.getPower());
-
-        // Don't give score for hitting boss (only when killed)
-    }
-    initPlayer() {
-        const currentShipId = this.playerShipTypes[this.currentPlayerShipIndex];
-        this.player = new Player(this, this.centreX, this.scale.height - 100, currentShipId, 1); // Pass player ID
     }
 
     initInput() {
         this.cursors = this.input.keyboard.createCursorKeys();
 
-        // check for spacebar press only once
-        this.cursors.space.once('down', (key, event) => {
-            this.startGame();
+        // Check for spacebar press to start game
+        this.cursors.space.on('down', () => {
+            if (this.waitingForStart) {
+                this.startGame();
+            }
         });
+
+        // Check for controller START button to start game
+        this.checkControllerStart();
+    }
+
+    checkControllerStart() {
+        const checkStart = () => {
+            if (!this.waitingForStart) return;
+
+            // Update controller list
+            this.updateConnectedControllers();
+
+            // Check for START button on any controller
+            this.connectedControllers.forEach(controller => {
+                const gamepad = controller.gamepad;
+                if (gamepad && gamepad.buttons[9] && gamepad.buttons[9].pressed) {
+                    // Add the first player and start the game
+                    this.createPlayer(1, controller.index);
+                    this.startGame();
+                    return;
+                }
+            });
+
+            // Continue checking
+            if (this.waitingForStart) {
+                this.time.delayedCall(100, checkStart);
+            }
+        };
+
+        checkStart();
     }
 
     // create tile map data
@@ -558,14 +731,29 @@ create() {
     }
 
     startGame() {
-        this.gameStarted = true;
+        if (this.gameStarted) return; // Prevent multiple starts
 
-        // Check if tutorialText exists before trying to hide it
+        this.gameStarted = true;
+        this.waitingForStart = false;
+
+        // Hide tutorial text
         if (this.tutorialText) {
             this.tutorialText.setVisible(false);
         }
 
+        // Add all existing players to the player group for physics
+        this.players.forEach(player => {
+            if (player) {
+                this.playerGroup.add(player);
+            }
+        });
+
+        // Update UI
+        this.updatePlayersAliveUI();
+
         this.addFlyingGroup();
+
+        console.log(`Game started with ${this.activePlayers} players!`);
     }
 
     // Updated fireBullet method to handle explosive bullets
@@ -593,6 +781,7 @@ create() {
     removeBullet(bullet) {
         this.playerBulletGroup.remove(bullet, true, true);
     }
+
     removeBoss(boss) {
         if (this.currentBoss === boss) {
             this.currentBoss = null;
@@ -609,6 +798,7 @@ create() {
 
         this.bossGroup.remove(boss, true, true);
     }
+
     fireEnemyBullet(x, y, power) {
         const bullet = new EnemyBullet(this, x, y, power);
         this.enemyBulletGroup.add(bullet);
@@ -631,7 +821,7 @@ create() {
     }
 
     removeEnemyBullet(bullet) {
-        this.enemyBulletGroup.remove(bullet, true, true); // Fixed: was removing from playerBulletGroup
+        this.enemyBulletGroup.remove(bullet, true, true);
     }
 
     // add a group of flying enemies with varied types and higher difficulty
@@ -650,7 +840,7 @@ create() {
         const randomPath = Phaser.Math.RND.between(0, 3);
 
         // FIXED: Much more gradual enemy power scaling
-        const randomPower = Math.min(1 + Math.floor(this.difficultyLevel / 5), 4); // Was: Math.min(1 + Math.floor(level / 2), 8)
+        const randomPower = Math.min(1 + Math.floor(this.difficultyLevel / 5), 4);
         const randomSpeed = Phaser.Math.RND.realInRange(0.0002, 0.002);
 
         this.timedEvent = this.time.addEvent({
@@ -738,13 +928,13 @@ create() {
         // Update UI
         this.levelText.setText(`Level: ${this.difficultyLevel}`);
 
-        // Change player ship every 6 levels
+        // Change player ship every 6 levels for ALL players
         if (this.difficultyLevel % 6 === 1 && this.difficultyLevel > 1) {
-            this.upgradePlayerShip();
+            this.upgradeAllPlayerShips();
         }
 
-        // Player gets bonuses when leveling up
-        this.givePlayerLevelUpBonus();
+        // All players get bonuses when leveling up
+        this.giveAllPlayersLevelUpBonus();
 
         // Visual celebration
         this.showLevelUpEffect();
@@ -754,90 +944,98 @@ create() {
         console.log(`Enemy color: ${this.getCurrentEnemyColor().toString(16)}`);
     }
 
-    // NEW: Upgrade player ship every 6 levels with enhanced stats preservation
-// UPDATE the upgradePlayerShip() method in Game.js to preserve attack types:
-
-    upgradePlayerShip() {
+    // NEW: Upgrade all player ships every 6 levels
+    upgradeAllPlayerShips() {
         this.currentPlayerShipIndex = (this.currentPlayerShipIndex + 1) % this.playerShipTypes.length;
         const newShipId = this.playerShipTypes[this.currentPlayerShipIndex];
 
-        // Store player stats - DON'T store scale values, recalculate them
+        this.players.forEach((player, index) => {
+            if (player && player.active) {
+                this.upgradePlayerShip(player, newShipId);
+            }
+        });
+
+        console.log(`All players upgraded to ship type ${newShipId} (index ${this.currentPlayerShipIndex})`);
+    }
+
+    upgradePlayerShip(player, newShipId) {
+        // Store player stats
         const playerStats = {
-            health: this.player.health,
-            maxHealth: this.player.maxHealth,
-            bulletPower: this.player.bulletPower,
-            fireRate: this.player.fireRate,
-            baseDamage: this.player.baseDamage || 1,
-            scaleX: this.player.scaleX,
-            scaleY: this.player.scaleY,
-            x: this.player.x,
-            y: this.player.y,
-            level: this.difficultyLevel, // Store level for scale calculation
+            health: player.health,
+            maxHealth: player.maxHealth,
+            bulletPower: player.bulletPower,
+            fireRate: player.fireRate,
+            baseDamage: player.baseDamage || 1,
+            scaleX: player.scaleX,
+            scaleY: player.scaleY,
+            x: player.x,
+            y: player.y,
+            playerId: player.playerId,
+            gamepadIndex: player.gamepadIndex,
+            tint: player.tintTopLeft,
 
             // PRESERVE ATTACK TYPES
-            hasCircularPattern: this.player.hasCircularPattern,
-            hasConeSpray: this.player.hasConeSpray,
-            hasExplosiveCircular: this.player.hasExplosiveCircular,
-            hasExplosiveBullets: this.player.hasExplosiveBullets,
+            hasCircularPattern: player.hasCircularPattern,
+            hasConeSpray: player.hasConeSpray,
+            hasExplosiveCircular: player.hasExplosiveCircular,
+            hasExplosiveBullets: player.hasExplosiveBullets,
 
             // PRESERVE FIRE RATE BACKUPS
-            originalFireRate: this.player.originalFireRate,
-            originalFireRateCircular: this.player.originalFireRateCircular
+            originalFireRate: player.originalFireRate,
+            originalFireRateCircular: player.originalFireRateCircular
         };
 
-        // Remove old player
-        this.player.destroy();
+        // Remove old player from groups
+        this.playerGroup.remove(player);
+
+        // Destroy old player
+        player.destroy();
 
         // Create new player with upgraded ship
-        this.player = new Player(this, playerStats.x, playerStats.y, newShipId, 1);
+        const newPlayer = new Player(this, playerStats.x, playerStats.y, newShipId, playerStats.playerId, playerStats.gamepadIndex);
 
         // Restore player stats
-        this.player.health = playerStats.health;
-        this.player.maxHealth = playerStats.maxHealth;
-        this.player.bulletPower = playerStats.bulletPower;
-        this.player.fireRate = playerStats.fireRate;
-        this.player.baseDamage = playerStats.baseDamage;
-
-        // Restore scaling
-        this.player.setScale(playerStats.scaleX, playerStats.scaleY);
+        newPlayer.health = playerStats.health;
+        newPlayer.maxHealth = playerStats.maxHealth;
+        newPlayer.bulletPower = playerStats.bulletPower;
+        newPlayer.fireRate = playerStats.fireRate;
+        newPlayer.baseDamage = playerStats.baseDamage;
+        newPlayer.setScale(playerStats.scaleX, playerStats.scaleY);
+        newPlayer.setTint(playerStats.tint);
 
         // RESTORE ATTACK TYPES
-        this.player.hasCircularPattern = playerStats.hasCircularPattern;
-        this.player.hasConeSpray = playerStats.hasConeSpray;
-        this.player.hasExplosiveCircular = playerStats.hasExplosiveCircular;
-        this.player.hasExplosiveBullets = playerStats.hasExplosiveBullets;
+        newPlayer.hasCircularPattern = playerStats.hasCircularPattern;
+        newPlayer.hasConeSpray = playerStats.hasConeSpray;
+        newPlayer.hasExplosiveCircular = playerStats.hasExplosiveCircular;
+        newPlayer.hasExplosiveBullets = playerStats.hasExplosiveBullets;
 
         // RESTORE FIRE RATE BACKUPS
-        this.player.originalFireRate = playerStats.originalFireRate;
-        this.player.originalFireRateCircular = playerStats.originalFireRateCircular;
+        newPlayer.originalFireRate = playerStats.originalFireRate;
+        newPlayer.originalFireRateCircular = playerStats.originalFireRateCircular;
 
         // Update hitbox for current scale
         const hitboxScale = Math.min(playerStats.scaleX, 1.3);
-        this.player.body.setSize(
-            64 * hitboxScale, // Base ship size is 64x64
-            64 * hitboxScale
-        );
+        newPlayer.body.setSize(64 * hitboxScale, 64 * hitboxScale);
+
+        // Replace in players array
+        this.players[playerStats.playerId - 1] = newPlayer;
+
+        // Add to player group
+        this.playerGroup.add(newPlayer);
 
         // Update health UI
-        this.updatePlayerHealthUI(this.player.playerId, this.player.health, this.player.maxHealth);
-
-        // Reinitialize physics collision
-        this.physics.add.overlap(this.player, this.enemyBulletGroup, this.hitPlayer, null, this);
-        this.physics.add.overlap(this.player, this.enemyGroup, this.hitPlayer, null, this);
-        this.physics.add.overlap(this.player, this.powerUpManager.getPowerUpGroup(), this.collectPowerUp, null, this);
+        this.updatePlayerHealthUI(newPlayer.playerId, newPlayer.health, newPlayer.maxHealth);
 
         // Show ship upgrade effect
-        this.showShipUpgradeEffect();
+        this.showShipUpgradeEffect(newPlayer);
 
-        console.log(`Player ship upgraded to type ${newShipId} (index ${this.currentPlayerShipIndex})`);
-        console.log(`Ship scale: ${playerStats.scaleX.toFixed(2)}x, Base damage: ${playerStats.baseDamage}`);
-        console.log(`Attack types preserved: Circular=${this.player.hasCircularPattern}, Cone=${this.player.hasConeSpray}, ExplosiveCirc=${this.player.hasExplosiveCircular}, ExplosiveBullets=${this.player.hasExplosiveBullets}`);
+        console.log(`Player ${playerStats.playerId} ship upgraded to type ${newShipId}`);
     }
 
-    // NEW: Ship upgrade visual effect
-    showShipUpgradeEffect() {
+    // NEW: Ship upgrade visual effect for specific player
+    showShipUpgradeEffect(player) {
         // Bright flash around player
-        const upgradeFlash = this.add.circle(this.player.x, this.player.y, 80, 0x00ffff, 0.8);
+        const upgradeFlash = this.add.circle(player.x, player.y, 80, 0x00ffff, 0.8);
         upgradeFlash.setDepth(150);
 
         this.tweens.add({
@@ -851,55 +1049,63 @@ create() {
         });
 
         // Ship upgrade text
-        this.showFloatingText(this.player.x, this.player.y - 50, 'SHIP UPGRADE!', 0x00ffff, 22);
+        this.showFloatingText(player.x, player.y - 50, 'SHIP UPGRADE!', 0x00ffff, 22);
     }
 
-    // NEW: Give player bonuses on level up with progressive scaling
-    givePlayerLevelUpBonus() {
-        if (!this.player) return;
+    // NEW: Give all players bonuses on level up
+    giveAllPlayersLevelUpBonus() {
+        this.players.forEach(player => {
+            if (player && player.active) {
+                this.givePlayerLevelUpBonus(player);
+            }
+        });
+    }
+
+    givePlayerLevelUpBonus(player) {
+        if (!player) return;
 
         // Scale player size every 2 levels (5% bigger)
         if (this.difficultyLevel % 2 === 0) {
-            this.scalePlayerSize();
+            this.scalePlayerSize(player);
         }
 
         // Progressive health bonus (scales with level)
         const healthBonus = this.calculateHealthBonus();
-        this.player.maxHealth += healthBonus;
+        player.maxHealth += healthBonus;
 
         // Progressive damage bonus every 3 levels
         if (this.difficultyLevel % 3 === 0) {
-            this.increasePlayerDamage();
+            this.increasePlayerDamage(player);
         }
 
         // Full heal on level up
-        this.player.health = this.player.maxHealth;
+        player.health = player.maxHealth;
 
         // Update health UI
-        this.updatePlayerHealthUI(this.player.playerId, this.player.health, this.player.maxHealth);
+        this.updatePlayerHealthUI(player.playerId, player.health, player.maxHealth);
 
         // Show bonus text with all upgrades
         const bonusText = this.createLevelUpBonusText(healthBonus);
-        this.showFloatingText(this.player.x, this.player.y - 30, bonusText, 0x00ff00, 24);
+        this.showFloatingText(player.x, player.y - 30, bonusText, 0x00ff00, 24);
 
-        console.log(`Level ${this.difficultyLevel} bonuses: +${healthBonus} HP, Scale: ${this.player.scaleX.toFixed(2)}x, Damage: ${this.player.baseDamage || 1}`);
+        console.log(`Player ${player.playerId} Level ${this.difficultyLevel} bonuses: +${healthBonus} HP, Scale: ${player.scaleX.toFixed(2)}x, Damage: ${player.baseDamage || 1}`);
     }
 
-    // NEW: Scale player size by 5% every 2 levels
-    scalePlayerSize() {
-        const currentScale = this.player.scaleX;
+    // NEW: Scale specific player size by 5% every 2 levels
+    scalePlayerSize(player) {
+        const currentScale = player.scaleX;
         const newScale = currentScale * 1.05; // 5% bigger
 
-        this.player.setScale(newScale);
+        player.setScale(newScale);
 
         // Update hitbox proportionally (keep it fair)
         const hitboxScale = Math.min(newScale, 1.3); // Cap hitbox growth at 30%
-        this.player.body.setSize(
-            this.player.body.width * (hitboxScale / currentScale),
-            this.player.body.height * (hitboxScale / currentScale)
+        player.body.setSize(
+            player.body.width * (hitboxScale / currentScale),
+            player.body.height * (hitboxScale / currentScale)
         );
 
-        console.log(`Player scaled to ${newScale.toFixed(2)}x (hitbox: ${hitboxScale.toFixed(2)}x)`);
+        console.log(`Player ${player.playerId} scaled to ${newScale.toFixed(2)}x (hitbox: ${hitboxScale.toFixed(2)}x)`);
     }
 
     // NEW: Calculate progressive health bonus
@@ -912,14 +1118,14 @@ create() {
         return baseBonus + progressiveBonus;
     }
 
-    // NEW: Increase player damage every 3 levels
-    increasePlayerDamage() {
-        if (!this.player.baseDamage) {
-            this.player.baseDamage = 1; // Initialize base damage
+    // NEW: Increase specific player damage every 3 levels
+    increasePlayerDamage(player) {
+        if (!player.baseDamage) {
+            player.baseDamage = 1; // Initialize base damage
         }
 
-        this.player.baseDamage += 1;
-        console.log(`Player base damage increased to ${this.player.baseDamage}`);
+        player.baseDamage += 1;
+        console.log(`Player ${player.playerId} base damage increased to ${player.baseDamage}`);
     }
 
     // NEW: Create comprehensive level up bonus text
@@ -985,6 +1191,7 @@ create() {
         // Scale enemy health dynamically based on difficulty level
         return Math.floor(3 * Math.pow(1.6, this.difficultyLevel - 1));
     }
+
     calculateFibonacci(n) {
         // Dynamically calculate the nth Fibonacci number
         if (n <= 1) return 500;
@@ -994,6 +1201,7 @@ create() {
         }
         return b;
     }
+
     // NEW: Get current enemy color based on difficulty level
     getCurrentEnemyColor() {
         const index = Math.min(this.difficultyLevel - 1, this.enemyColorsByLevel.length - 1);
@@ -1021,6 +1229,60 @@ create() {
         });
     }
 
+    // NEW: Player death handler
+    onPlayerDeath(playerId) {
+        console.log(`Player ${playerId} has died!`);
+
+        // Hide health bar for dead player
+        this.setPlayerHealthBarVisible(playerId, false);
+
+        // Mark player as null in array but don't decrement activePlayers yet
+        // (the destroyed player will be cleaned up automatically)
+        const player = this.players[playerId - 1];
+        if (player) {
+            this.players[playerId - 1] = null;
+        }
+
+        // Use a small delay to ensure proper cleanup before checking game over
+        this.time.delayedCall(100, () => {
+            this.checkGameOver();
+        });
+    }
+
+    // NEW: Check if all players are dead
+    checkGameOver() {
+        // Count actually alive players (not null and still active with health > 0)
+        const alivePlayers = this.players.filter(player =>
+            player &&
+            player.active &&
+            player.health > 0
+        );
+
+        // Update players alive counter
+        this.updatePlayersAliveUI();
+
+        console.log(`Alive players: ${alivePlayers.length}, Active players: ${this.activePlayers}`);
+
+        // Game over if no players are alive AND game has started
+        if (alivePlayers.length === 0 && this.gameStarted) {
+            this.time.delayedCall(1000, () => {
+                this.GameOver();
+            });
+        }
+    }
+
+    updatePlayersAliveUI() {
+        const alivePlayers = this.players.filter(player =>
+            player &&
+            player.active &&
+            player.health > 0
+        ).length;
+
+        if (this.playersAliveText) {
+            this.playersAliveText.setText(`Players: ${alivePlayers}`);
+        }
+    }
+
     GameOver() {
         this.gameStarted = false;
         this.gameOverText.setVisible(true);
@@ -1041,7 +1303,10 @@ create() {
                 .setDepth(100);
         }
         this.restartText.setVisible(true);
+
+        console.log('Game Over - All players defeated!');
     }
+
     checkBossSpawn() {
         if (this.difficultyLevel % 5 === 0 && this.difficultyLevel > this.lastBossLevel && !this.currentBoss) {
             this.spawnBoss();
@@ -1125,20 +1390,7 @@ create() {
 
         console.log(`Boss spawned: ${bossType.name} at level ${this.difficultyLevel}`);
     }
-    fireEnemyBulletAngled(x, y, power, angleDegrees) {
-        const bullet = new EnemyBullet(this, x, y, power);
 
-        // Convert angle to radians and calculate velocity components
-        const angleRadians = Phaser.Math.DegToRad(angleDegrees);
-        const speed = 200 * (0.5 + power * 0.1); // Slightly faster for higher power
-        const velocityX = Math.sin(angleRadians) * speed;
-        const velocityY = Math.cos(angleRadians) * speed; // Positive because enemy bullets go down
-
-        // Set the bullet's velocity
-        bullet.setVelocity(velocityX, velocityY);
-
-        this.enemyBulletGroup.add(bullet);
-    }
     collectPowerUp(player, powerUp) {
         this.powerUpManager.handleCollision(player, powerUp);
     }
