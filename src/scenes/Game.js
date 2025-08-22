@@ -137,7 +137,17 @@ export class Game extends Phaser.Scene {
     }
 
     fireEnemyBullet(x, y, power) {
-        return this.enemyManager.fireEnemyBullet(x, y, power);
+        if (this.enemyManager && this.enemyManager.fireEnemyBullet) {
+            return this.enemyManager.fireEnemyBullet(x, y, power);
+        } else {
+            // Fallback: create bullet directly
+            const EnemyBullet = require('./gameObjects/EnemyBullet.js').default;
+            const bullet = new EnemyBullet(this, x, y, power);
+            if (this.enemyBulletGroup) {
+                this.enemyBulletGroup.add(bullet);
+            }
+            return bullet;
+        }
     }
 
     fireEnemyBulletAngled(x, y, power, angleDegrees) {
@@ -218,11 +228,45 @@ export class Game extends Phaser.Scene {
         this.gameState.gameStarted = false;
         this.uiManager.showGameOver();
 
-        this.input.keyboard.once('keydown-SPACE', () => {
+        // Keyboard restart
+        const spaceKeyHandler = () => {
             this.scene.restart();
-        });
+        };
 
-        console.log('Game Over - All players defeated!');
+        this.input.keyboard.once('keydown-SPACE', spaceKeyHandler);
+
+        // Controller restart - check for START button on any connected controller
+        const checkControllerRestart = () => {
+            if (!navigator.getGamepads) return;
+
+            const gamepads = navigator.getGamepads();
+            let restartPressed = false;
+
+            // Check all connected controllers for START button
+            for (let i = 0; i < gamepads.length; i++) {
+                const gamepad = gamepads[i];
+                if (gamepad && gamepad.buttons[9] && gamepad.buttons[9].pressed) {
+                    restartPressed = true;
+                    break;
+                }
+            }
+
+            if (restartPressed) {
+                // Remove keyboard listener to prevent double restart
+                this.input.keyboard.off('keydown-SPACE', spaceKeyHandler);
+                this.scene.restart();
+            } else {
+                // Continue checking if game is still over
+                if (!this.gameState.gameStarted) {
+                    this.time.delayedCall(100, checkControllerRestart);
+                }
+            }
+        };
+
+        // Start checking for controller input
+        checkControllerRestart();
+
+        console.log('Game Over - All players defeated! Press SPACE or START button to restart.');
     }
 
     // Getters for managers to access groups and state

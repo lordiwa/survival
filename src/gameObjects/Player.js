@@ -319,7 +319,26 @@ export default class Player extends Phaser.Physics.Arcade.Sprite {
         this.maxHealth += amount;
         console.log(`Player ${this.playerId} max health increased to: ${this.maxHealth}`);
     }
+    clearAllShootingPatterns() {
+        // Clear all special shooting patterns
+        this.hasCircularPattern = false;
+        this.hasConeSpray = false;
+        this.hasExplosiveCircular = false;
+        this.hasExplosiveBullets = false;
 
+        // Restore original fire rate if any temporary effects were active
+        if (this.originalFireRate) {
+            this.fireRate = this.originalFireRate;
+            this.originalFireRate = null;
+        }
+
+        if (this.originalFireRateCircular) {
+            this.fireRate = this.originalFireRateCircular;
+            this.originalFireRateCircular = null;
+        }
+
+        console.log(`Player ${this.playerId} - All shooting patterns cleared`);
+    }
     fullHeal() {
         this.health = this.maxHealth;
         this.scene.updatePlayerHealthUI(this.playerId, this.health, this.maxHealth);

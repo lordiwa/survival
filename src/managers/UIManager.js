@@ -227,7 +227,7 @@ export default class UIManager {
         this.gameOverText.setVisible(true);
 
         if (!this.restartText) {
-            this.restartText = this.scene.add.text(this.scene.scale.width * 0.5, this.scene.scale.height * 0.5 + 80, 'Press SPACE to restart', {
+            this.restartText = this.scene.add.text(this.scene.scale.width * 0.5, this.scene.scale.height * 0.5 + 80, 'Press START to play again', {
                 fontFamily: 'Arial Black',
                 fontSize: 32,
                 color: '#ffffff',
