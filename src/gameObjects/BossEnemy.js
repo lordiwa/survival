@@ -372,21 +372,45 @@ export default class BossEnemy extends Phaser.Physics.Arcade.Sprite {
                 const spawnX = this.x + Math.cos(angleRad) * spawnRadius;
                 const spawnY = this.y + Math.sin(angleRad) * spawnRadius;
 
-                // Import EnemyFlying properly
-                const EnemyFlying = this.scene.EnemyFlying ||
-                    (typeof window !== 'undefined' && window.EnemyFlying) ||
-                    this.scene.constructor.EnemyFlying;
+                // Get enemy type from GameState instead of scene
+                const minionType = this.scene.gameState ?
+                    this.scene.gameState.enemyShipTypes[0] :
+                    { id: 12, name: 'Basic', shootPattern: 'single', fireRate: [100, 300] }; // Fallback
 
-                // Create minion using the same method as normal enemies
-                const minionType = this.scene.enemyShipTypes[0]; // Basic enemy type
-                const minion = this.scene.addEnemy(
-                    minionType,
-                    0, // pathId (will be overridden)
-                    0.001, // speed
-                    Math.max(1, this.power - 2), // Weaker than boss
-                    Math.max(1, Math.floor(this.level / 2)), // Less health
-                    this.bossType.color
-                );
+                // Create minion using the enemy manager
+                let minion;
+                if (this.scene.enemyManager && this.scene.enemyManager.addEnemy) {
+                    // Use enemy manager if available
+                    minion = this.scene.enemyManager.addEnemy(
+                        minionType,
+                        0, // pathId (will be overridden)
+                        0.001, // speed
+                        Math.max(1, this.power - 2), // Weaker than boss
+                        Math.max(1, Math.floor(this.level / 2)), // Less health
+                        this.bossType.color
+                    );
+                } else {
+                    // Fallback: create directly using the old method
+                    const EnemyFlying = this.scene.EnemyFlying ||
+                        (typeof window !== 'undefined' && window.EnemyFlying);
+
+                    if (EnemyFlying) {
+                        minion = new EnemyFlying(
+                            this.scene,
+                            minionType,
+                            0, // pathId
+                            0.001, // speed
+                            Math.max(1, this.power - 2), // power
+                            Math.max(1, Math.floor(this.level / 2)), // health
+                            this.bossType.color
+                        );
+
+                        // Add to enemy group
+                        if (this.scene.enemyGroup) {
+                            this.scene.enemyGroup.add(minion);
+                        }
+                    }
+                }
 
                 // Position and customize the minion
                 if (minion) {
@@ -398,14 +422,21 @@ export default class BossEnemy extends Phaser.Physics.Arcade.Sprite {
                     minion.pathIndex = 2; // Skip path following
 
                     // Set velocity toward player or downward
-                    if (this.scene.player) {
-                        const dx = this.scene.player.x - spawnX;
-                        const dy = this.scene.player.y - spawnY;
-                        const distance = Math.sqrt(dx * dx + dy * dy);
-                        const speed = 100;
-                        minion.setVelocity((dx / distance) * speed, (dy / distance) * speed);
+                    if (this.scene.gameState && this.scene.gameState.players) {
+                        // Find first alive player
+                        const alivePlayer = this.scene.gameState.players.find(p => p && p.active && p.health > 0);
+
+                        if (alivePlayer) {
+                            const dx = alivePlayer.x - spawnX;
+                            const dy = alivePlayer.y - spawnY;
+                            const distance = Math.sqrt(dx * dx + dy * dy);
+                            const speed = 100;
+                            minion.setVelocity((dx / distance) * speed, (dy / distance) * speed);
+                        } else {
+                            minion.setVelocityY(150); // Move downward if no players
+                        }
                     } else {
-                        minion.setVelocityY(150); // Move downward if no player
+                        minion.setVelocityY(150); // Move downward as fallback
                     }
 
                     // Add spawn effect
